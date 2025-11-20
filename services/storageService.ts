@@ -16,27 +16,46 @@ const RECURRING_KEY = 'smartspend_recurring_v1';
 
 // --- Transactions ---
 
+const sortTransactions = (list: Transaction[]) => {
+  return [...list].sort((a, b) => {
+    const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
+    if (dateDiff !== 0) return dateDiff;
+    const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return cb - ca;
+  });
+};
+
 export const getTransactions = async (): Promise<Transaction[]> => {
   if (supabase) {
-    const { data, error } = await supabase.from('transactions').select('*').order('date', { ascending: false });
-    if (!error && data) return data as Transaction[];
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .order('date', { ascending: false })
+      .order('created_at', { ascending: false });
+    if (!error && data) return sortTransactions(data as Transaction[]);
   }
   
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) return MOCK_DATA_IF_EMPTY as Transaction[];
-    return JSON.parse(stored);
+    if (!stored) return sortTransactions(MOCK_DATA_IF_EMPTY as Transaction[]);
+    return sortTransactions(JSON.parse(stored));
   } catch (e) {
     return [];
   }
 };
 
 export const saveTransaction = async (transaction: Transaction): Promise<void> => {
+  const record: Transaction = {
+    ...transaction,
+    created_at: transaction.created_at ?? new Date().toISOString(),
+  };
+
   if (supabase) {
-    await supabase.from('transactions').upsert(transaction);
+    await supabase.from('transactions').upsert(record);
   }
   const current = await getTransactionsLocal();
-  const updated = [transaction, ...current.filter(t => t.id !== transaction.id)];
+  const updated = [record, ...current.filter(t => t.id !== record.id)];
   localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
 };
 

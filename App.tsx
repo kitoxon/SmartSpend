@@ -68,11 +68,11 @@ const App: React.FC = () => {
 
   const handleSaveTransaction = async (newTxData: Omit<Transaction, 'id'>, existingId?: string) => {
     if (existingId) {
-      const updatedTx: Transaction = { ...newTxData, id: existingId };
+      const updatedTx: Transaction = { ...newTxData, id: existingId, created_at: editingTransaction?.created_at ?? new Date().toISOString() };
       setTransactions(prev => prev.map(tx => tx.id === existingId ? updatedTx : tx));
       await saveTransaction(updatedTx);
     } else {
-      const newTx: Transaction = { ...newTxData, id: crypto.randomUUID() };
+      const newTx: Transaction = { ...newTxData, id: crypto.randomUUID(), created_at: new Date().toISOString() };
       setTransactions(prev => [newTx, ...prev]);
       await saveTransaction(newTx);
     }

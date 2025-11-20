@@ -30,6 +30,7 @@ export interface Transaction {
   date: string; // ISO date string
   description: string;
   type: TransactionType;
+  created_at?: string; // Creation timestamp (for ordering)
 }
 
 export interface RecurringTransaction {
