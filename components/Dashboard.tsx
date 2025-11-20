@@ -194,8 +194,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
               <TrendingUp size={12} /> Cash Flow Trend
             </h3>
           </div>
-          <div className="h-40 w-full">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="h-40 w-full min-w-0 min-h-0">
+            <ResponsiveContainer width="100%" height="100%" style={{ minWidth: 0, minHeight: 0 }}>
               <BarChart data={trendChartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
                 <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: '#71717a', fontFamily: 'Manrope' }} dy={10} />
@@ -216,9 +216,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
         {/* Category Chart */}
         <div className="bg-zinc-900 p-5 rounded-xl border border-zinc-800">
           <h3 className="font-bold text-zinc-500 text-[10px] uppercase tracking-wider mb-4">Category Breakdown</h3>
-          <div className="h-64 w-full">
+          <div className="h-64 w-full min-w-0 min-h-0">
             {categoryData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" style={{ minWidth: 0, minHeight: 0 }}>
                 <PieChart>
                   <Pie
                     data={categoryData}
@@ -282,7 +282,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
       </div>
       
       <AIInsights 
-        expenses={transactions} 
         debts={debts} 
         monthlyFreeCashFlow={currentMonthCashFlow} 
       />

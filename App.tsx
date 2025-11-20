@@ -217,13 +217,17 @@ const App: React.FC = () => {
         {currentView === 'goals' && <GoalList goals={goals} onDelete={handleDeleteGoal} onAddFundsClick={handleOpenAddFunds} />}
       </main>
 
-      {/* FAB - White on Black */}
-      <button
-        onClick={handleFabClick}
-        className="fixed bottom-20 right-4 lg:absolute lg:bottom-20 lg:right-6 z-30 bg-white text-black h-12 w-12 rounded-full shadow-xl shadow-zinc-900/50 transition-all active:scale-90 hover:scale-105 flex items-center justify-center border border-zinc-200"
-      >
-        <Plus size={24} strokeWidth={2.5} />
-      </button>
+      {/* FAB - anchored to app container width */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-20 flex justify-center z-30">
+        <div className="w-full max-w-md px-4 flex justify-end">
+          <button
+            onClick={handleFabClick}
+            className="pointer-events-auto bg-white text-black h-12 w-12 rounded-full shadow-xl shadow-zinc-900/50 transition-all active:scale-90 hover:scale-105 flex items-center justify-center border border-zinc-200"
+          >
+            <Plus size={24} strokeWidth={2.5} />
+          </button>
+        </div>
+      </div>
 
       {/* Bottom Nav - Black with White Active State */}
       <nav className="fixed bottom-0 w-full max-w-md bg-black/90 border-t border-zinc-900 px-2 py-1 z-20 grid grid-cols-4 pb-safe backdrop-blur-lg">

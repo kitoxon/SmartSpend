@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#000000" />
     <title>Finance Tracker</title>
     <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/png" href="https://cdn-icons-png.flaticon.com/512/2382/2382461.png" />
-    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2382/2382461.png" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
     
     <!-- Font: Manrope only for cleaner, smart look -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -59,6 +59,12 @@
       ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 2px; }
       body { background-color: #000000; -webkit-tap-highlight-color: transparent; }
       input, select, textarea { font-size: 16px; } /* Prevents iOS zoom */
+      /* Hide number input spinners */
+      input[type="number"]::-webkit-inner-spin-button,
+      input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+      input[type="number"] { -moz-appearance: textfield; }
+      /* Make date picker indicator visible on dark backgrounds */
+      input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
     </style>
   <script type="importmap">
 {
@@ -76,6 +82,7 @@
 </head>
   <body class="bg-black text-zinc-200 font-sans antialiased selection:bg-zinc-800 selection:text-white">
     <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
