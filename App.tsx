@@ -110,8 +110,11 @@ const App: React.FC = () => {
      if (debt) {
         const newBalance = Math.max(0, debt.amount - amount);
         const isPaidOff = newBalance === 0;
+        const currentDue = new Date(debt.dueDate || new Date().toISOString());
+        const nextDue = new Date(currentDue);
+        nextDue.setMonth(nextDue.getMonth() + 1);
 
-        const updatedDebt = { ...debt, amount: newBalance, isPaid: isPaidOff };
+        const updatedDebt = { ...debt, amount: newBalance, isPaid: isPaidOff, dueDate: nextDue.toISOString() };
         setDebts(prev => prev.map(d => d.id === selectedDebtId ? updatedDebt : d));
         await saveDebt(updatedDebt);
 
