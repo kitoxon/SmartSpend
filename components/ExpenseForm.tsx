@@ -150,7 +150,8 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel }
               className="w-full h-12 px-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 text-zinc-200 outline-none text-sm"
             />
         </div>
-        <div className="flex flex-col justify-end">
+        <div>
+             <label className="block text-[10px] font-bold text-transparent uppercase tracking-wider mb-1.5">Repeat</label>
              <button 
                type="button"
                onClick={() => setIsRecurring(!isRecurring)}

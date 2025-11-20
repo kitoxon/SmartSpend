@@ -216,7 +216,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
         {/* Category Chart */}
         <div className="bg-zinc-900 p-5 rounded-xl border border-zinc-800">
           <h3 className="font-bold text-zinc-500 text-[10px] uppercase tracking-wider mb-4">Category Breakdown</h3>
-          <div className="h-56 w-full">
+          <div className="h-64 w-full">
             {categoryData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -224,9 +224,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
                     data={categoryData}
                     cx="50%"
                     cy="50%"
-                    innerRadius={55}
-                    outerRadius={80}
-                    paddingAngle={3}
+                    innerRadius={60}
+                    outerRadius={90}
+                    paddingAngle={4}
                     dataKey="value"
                     stroke="none"
                   >
@@ -241,7 +241,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
                   />
                   <Legend 
                     iconType="circle" 
-                    wrapperStyle={{ fontSize: '10px', fontFamily: 'Manrope', color: '#71717a', paddingTop: '20px' }} 
+                    wrapperStyle={{ fontSize: '10px', fontFamily: 'Manrope', color: '#71717a', paddingTop: '32px' }} 
                   />
                 </PieChart>
               </ResponsiveContainer>

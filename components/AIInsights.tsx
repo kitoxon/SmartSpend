@@ -133,7 +133,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ expenses, debts, monthly
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-8">
       {/* Tab Switcher */}
       <div className="flex p-1 bg-zinc-900 rounded-xl mb-4 border border-zinc-800">
         <button 

@@ -1,3 +1,4 @@
+
 const CACHE_NAME = 'smartspend-v1';
 const urlsToCache = [
   '/',
