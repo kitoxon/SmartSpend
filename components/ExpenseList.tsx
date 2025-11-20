@@ -8,13 +8,14 @@ import { Trash2, Search, Filter, XCircle, Calendar, ArrowUpDown } from 'lucide-r
 interface ExpenseListProps {
   expenses: Transaction[];
   onDelete: (id: string) => void;
+  onEdit: (tx: Transaction) => void;
 }
 
 type SortOption = 'date-new' | 'date-old' | 'amount-high' | 'amount-low';
 type DateRangeOption = 'all' | 'thisMonth' | 'lastMonth' | 'custom';
 type TypeFilterOption = 'all' | 'income' | 'expense';
 
-export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions, onDelete }) => {
+export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions, onDelete, onEdit }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<Category | 'All'>('All');
   const [sortBy, setSortBy] = useState<SortOption>('date-new');
@@ -135,7 +136,11 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
   const totalFilteredCount = processedTransactions.length;
 
   const renderItem = (item: Transaction, showDateLabel = false) => (
-    <div key={item.id} className="flex items-center p-4 hover:bg-zinc-900/80 transition-colors group border-b border-zinc-800 last:border-0">
+    <div
+      key={item.id}
+      className="flex items-center p-4 hover:bg-zinc-900/80 transition-colors group border-b border-zinc-800 last:border-0 cursor-pointer"
+      onClick={() => onEdit(item)}
+    >
       <div 
         className="w-10 h-10 rounded-lg bg-zinc-950 flex items-center justify-center shrink-0 mr-4 border border-zinc-800"
       >
@@ -163,7 +168,10 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
         <span className={`font-bold text-sm tabular-nums ${item.type === 'income' ? 'text-white' : 'text-zinc-500'}`}>
           {item.type === 'income' ? '+' : ''}¥{item.amount.toLocaleString()}
         </span>
-        <button onClick={() => onDelete(item.id)} className="text-zinc-600 hover:text-red-400 transition-all mt-1 p-1">
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(item.id); }}
+          className="text-zinc-600 hover:text-red-400 transition-all mt-1 p-1"
+        >
           <Trash2 size={12} />
         </button>
       </div>

@@ -38,6 +38,9 @@ const App: React.FC = () => {
   const [selectedDebtId, setSelectedDebtId] = useState<string | null>(null);
   const [debtPaymentAmount, setDebtPaymentAmount] = useState('');
   const [pendingDelete, setPendingDelete] = useState<{ type: 'transaction' | 'debt' | 'goal'; id: string } | null>(null);
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  const [editingDebt, setEditingDebt] = useState<Debt | null>(null);
+  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -63,10 +66,17 @@ const App: React.FC = () => {
     loadData();
   }, []);
 
-  const handleAddTransaction = async (newTxData: Omit<Transaction, 'id'>) => {
-    const newTx: Transaction = { ...newTxData, id: crypto.randomUUID() };
-    setTransactions(prev => [newTx, ...prev]);
-    await saveTransaction(newTx);
+  const handleSaveTransaction = async (newTxData: Omit<Transaction, 'id'>, existingId?: string) => {
+    if (existingId) {
+      const updatedTx: Transaction = { ...newTxData, id: existingId };
+      setTransactions(prev => prev.map(tx => tx.id === existingId ? updatedTx : tx));
+      await saveTransaction(updatedTx);
+    } else {
+      const newTx: Transaction = { ...newTxData, id: crypto.randomUUID() };
+      setTransactions(prev => [newTx, ...prev]);
+      await saveTransaction(newTx);
+    }
+    setEditingTransaction(null);
     setIsExpenseModalOpen(false);
   };
 
@@ -74,10 +84,17 @@ const App: React.FC = () => {
     setPendingDelete({ type: 'transaction', id });
   };
 
-  const handleAddDebt = async (newDebtData: Omit<Debt, 'id' | 'isPaid'>) => {
-    const newDebt: Debt = { ...newDebtData, id: crypto.randomUUID(), isPaid: false };
-    setDebts(prev => [newDebt, ...prev]);
-    await saveDebt(newDebt);
+  const handleSaveDebt = async (newDebtData: Omit<Debt, 'id' | 'isPaid'>, existingId?: string) => {
+    if (existingId) {
+      const updated: Debt = { ...newDebtData, id: existingId, isPaid: false };
+      setDebts(prev => prev.map(d => d.id === existingId ? updated : d));
+      await saveDebt(updated);
+    } else {
+      const newDebt: Debt = { ...newDebtData, id: crypto.randomUUID(), isPaid: false };
+      setDebts(prev => [newDebt, ...prev]);
+      await saveDebt(newDebt);
+    }
+    setEditingDebt(null);
     setIsDebtModalOpen(false);
   };
 
@@ -131,10 +148,17 @@ const App: React.FC = () => {
      setSelectedDebtId(null);
   };
 
-  const handleAddGoal = async (newGoalData: Omit<Goal, 'id'>) => {
-    const newGoal: Goal = { ...newGoalData, id: crypto.randomUUID() };
-    setGoals(prev => [newGoal, ...prev]);
-    await saveGoal(newGoal);
+  const handleSaveGoal = async (newGoalData: Omit<Goal, 'id'>, existingId?: string) => {
+    if (existingId) {
+      const updatedGoal: Goal = { ...newGoalData, id: existingId };
+      setGoals(prev => prev.map(g => g.id === existingId ? updatedGoal : g));
+      await saveGoal(updatedGoal);
+    } else {
+      const newGoal: Goal = { ...newGoalData, id: crypto.randomUUID() };
+      setGoals(prev => [newGoal, ...prev]);
+      await saveGoal(newGoal);
+    }
+    setEditingGoal(null);
     setIsGoalModalOpen(false);
   };
 
@@ -203,18 +227,55 @@ const App: React.FC = () => {
     } else if (currentView === 'goals') {
       setIsGoalModalOpen(true);
     } else {
+      setEditingTransaction(null);
       setIsExpenseModalOpen(true);
     }
   };
 
   if (isLoading) {
-    return <div className="min-h-screen bg-black flex items-center justify-center text-zinc-500 font-sans text-sm">Loading...</div>;
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center font-sans">
+        <div className="w-full max-w-md px-4 py-6 space-y-4">
+          <div className="h-10 w-32 bg-zinc-800/70 rounded-full animate-pulse-slow" />
+          <div className="bg-zinc-900/60 border border-zinc-800/70 rounded-xl p-5 space-y-4 backdrop-blur-sm">
+            <div className="h-4 w-24 bg-zinc-800/70 rounded animate-pulse-slow" />
+            <div className="flex gap-3">
+              <div className="h-8 w-24 bg-zinc-800/70 rounded animate-pulse-slow" />
+              <div className="h-8 w-24 bg-zinc-800/70 rounded animate-pulse-slow" />
+            </div>
+          </div>
+          <div className="bg-zinc-900/60 border border-zinc-800/70 rounded-xl p-5 space-y-3 backdrop-blur-sm">
+            <div className="h-4 w-32 bg-zinc-800/70 rounded animate-pulse-slow" />
+            <div className="h-40 w-full bg-zinc-800/50 rounded-lg animate-pulse-slow" />
+          </div>
+          <div className="bg-zinc-900/60 border border-zinc-800/70 rounded-xl p-5 space-y-3 backdrop-blur-sm">
+            <div className="h-4 w-28 bg-zinc-800/70 rounded animate-pulse-slow" />
+            <div className="h-40 w-full bg-zinc-800/50 rounded-lg animate-pulse-slow" />
+          </div>
+        </div>
+        <style>{`
+          @keyframes pulse-slow { 
+            0% { opacity: 0.6; } 
+            50% { opacity: 1; } 
+            100% { opacity: 0.6; } 
+          }
+          .animate-pulse-slow { animation: pulse-slow 1.5s ease-in-out infinite; }
+        `}</style>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-black max-w-md mx-auto shadow-2xl shadow-zinc-900 relative overflow-hidden text-zinc-200 border-x border-zinc-900 font-sans">
+    <div
+      className="min-h-screen max-w-md mx-auto shadow-2xl shadow-zinc-900 relative overflow-hidden text-zinc-200 border-x border-zinc-900 font-sans"
+      style={{
+        backgroundColor: '#000',
+        backgroundImage:
+          'radial-gradient(circle at 50% 20%, rgba(63, 63, 70, 0.35), rgba(0,0,0,0.5) 45%, #000 75%)'
+      }}
+    >
       {/* Header - Minimal & Translucent */}
-      <header className="bg-black/80 backdrop-blur-md px-5 py-4 sticky top-0 z-20 border-b border-zinc-900 flex items-center justify-between">
+      <header className="bg-black/70 backdrop-blur-md px-5 py-4 sticky top-0 z-20 border-b border-zinc-900/80 flex items-center justify-between">
         <div className="flex items-center gap-2.5 text-zinc-100">
           <div className="p-1.5 rounded-md bg-zinc-100 text-black">
              <Landmark className="w-3.5 h-3.5" strokeWidth={3} />
@@ -226,9 +287,9 @@ const App: React.FC = () => {
       <main className="p-4 min-h-[calc(100vh-140px)] relative z-10">
         <Suspense fallback={<div className="text-sm text-zinc-500">Loading...</div>}>
           {currentView === 'dashboard' && <Dashboard transactions={transactions} debts={debts} />}
-          {currentView === 'list' && <ExpenseList expenses={transactions} onDelete={handleDeleteTransaction} />}
-          {currentView === 'debts' && <DebtList debts={debts} onDelete={handleDeleteDebt} onToggleStatus={handleOpenPayDebt} />}
-          {currentView === 'goals' && <GoalList goals={goals} onDelete={handleDeleteGoal} onAddFundsClick={handleOpenAddFunds} />}
+        {currentView === 'list' && <ExpenseList expenses={transactions} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsExpenseModalOpen(true); }} />}
+        {currentView === 'debts' && <DebtList debts={debts} onDelete={handleDeleteDebt} onToggleStatus={handleOpenPayDebt} onEdit={(d) => { setEditingDebt(d); setIsDebtModalOpen(true); }} />}
+        {currentView === 'goals' && <GoalList goals={goals} onDelete={handleDeleteGoal} onAddFundsClick={handleOpenAddFunds} onEdit={(g) => { setEditingGoal(g); setIsGoalModalOpen(true); }} />}
         </Suspense>
       </main>
 
@@ -267,11 +328,11 @@ const App: React.FC = () => {
       {/* Command Menu Modal */}
       <Modal isOpen={isCommandMenuOpen} onClose={() => setIsCommandMenuOpen(false)} title="Quick Actions">
         <div className="grid grid-cols-2 gap-3 pt-2">
-           <button onClick={() => { setIsCommandMenuOpen(false); setIsExpenseModalOpen(true); }} className="flex flex-col items-center justify-center p-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-all active:scale-95 group">
+           <button onClick={() => { setIsCommandMenuOpen(false); setEditingTransaction(null); setIsExpenseModalOpen(true); }} className="flex flex-col items-center justify-center p-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-all active:scale-95 group">
               <div className="bg-zinc-100 p-2.5 rounded-full text-black mb-2 group-hover:bg-white transition-colors"><TrendingDown size={18} /></div>
               <span className="font-bold text-xs text-zinc-200 uppercase tracking-wide">Expense</span>
            </button>
-           <button onClick={() => { setIsCommandMenuOpen(false); setIsExpenseModalOpen(true); }} className="flex flex-col items-center justify-center p-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-all active:scale-95 group">
+           <button onClick={() => { setIsCommandMenuOpen(false); setEditingTransaction(null); setIsExpenseModalOpen(true); }} className="flex flex-col items-center justify-center p-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-all active:scale-95 group">
               <div className="bg-zinc-100 p-2.5 rounded-full text-black mb-2 group-hover:bg-white transition-colors"><TrendingUp size={18} /></div>
               <span className="font-bold text-xs text-zinc-200 uppercase tracking-wide">Income</span>
            </button>
@@ -286,14 +347,14 @@ const App: React.FC = () => {
         </div>
       </Modal>
 
-      <Modal isOpen={isExpenseModalOpen} onClose={() => setIsExpenseModalOpen(false)} title="Log Transaction">
-        <ExpenseForm onSave={handleAddTransaction} onCancel={() => setIsExpenseModalOpen(false)} />
+      <Modal isOpen={isExpenseModalOpen} onClose={() => { setIsExpenseModalOpen(false); setEditingTransaction(null); }} title={editingTransaction ? "Edit Transaction" : "Log Transaction"}>
+        <ExpenseForm transaction={editingTransaction ?? undefined} onSave={handleSaveTransaction} onCancel={() => { setIsExpenseModalOpen(false); setEditingTransaction(null); }} />
       </Modal>
-      <Modal isOpen={isDebtModalOpen} onClose={() => setIsDebtModalOpen(false)} title="Add Debt">
-        <DebtForm onSave={handleAddDebt} onCancel={() => setIsDebtModalOpen(false)} />
+      <Modal isOpen={isDebtModalOpen} onClose={() => { setIsDebtModalOpen(false); setEditingDebt(null); }} title={editingDebt ? "Edit Debt" : "Add Debt"}>
+        <DebtForm debt={editingDebt ?? undefined} onSave={handleSaveDebt} onCancel={() => { setIsDebtModalOpen(false); setEditingDebt(null); }} />
       </Modal>
-      <Modal isOpen={isGoalModalOpen} onClose={() => setIsGoalModalOpen(false)} title="New Goal">
-        <GoalForm onSave={handleAddGoal} onCancel={() => setIsGoalModalOpen(false)} />
+      <Modal isOpen={isGoalModalOpen} onClose={() => { setIsGoalModalOpen(false); setEditingGoal(null); }} title={editingGoal ? "Edit Goal" : "New Goal"}>
+        <GoalForm goal={editingGoal ?? undefined} onSave={handleSaveGoal} onCancel={() => { setIsGoalModalOpen(false); setEditingGoal(null); }} />
       </Modal>
       
       <Modal isOpen={isAddFundsModalOpen} onClose={() => setIsAddFundsModalOpen(false)} title="Add Funds">

@@ -6,9 +6,10 @@ interface DebtListProps {
   debts: Debt[];
   onDelete: (id: string) => void;
   onToggleStatus: (id: string) => void; 
+  onEdit?: (debt: Debt) => void;
 }
 
-export const DebtList: React.FC<DebtListProps> = ({ debts, onDelete, onToggleStatus }) => {
+export const DebtList: React.FC<DebtListProps> = ({ debts, onDelete, onToggleStatus, onEdit }) => {
   const sortedDebts = [...debts].sort((a, b) => {
     if (a.isPaid === b.isPaid) {
       return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
@@ -80,11 +81,12 @@ export const DebtList: React.FC<DebtListProps> = ({ debts, onDelete, onToggleSta
             return (
             <div 
               key={debt.id} 
-              className={`p-4 rounded-lg border transition-all flex flex-col gap-3 group relative overflow-hidden ${
+              className={`p-4 rounded-lg border transition-all flex flex-col gap-3 group relative overflow-hidden cursor-pointer ${
                 debt.isPaid 
                   ? 'opacity-50 border-zinc-800 bg-zinc-900' 
                   : 'bg-zinc-800/40 border-zinc-800'
               }`}
+              onClick={() => onEdit?.(debt)}
             >
               <div className="flex items-start justify-between w-full gap-3">
                  <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -123,7 +125,7 @@ export const DebtList: React.FC<DebtListProps> = ({ debts, onDelete, onToggleSta
               {!debt.isPaid && (
                 <div className="border-t border-zinc-800/50 pt-3 mt-1 flex items-center justify-between">
                    <button 
-                        onClick={() => onDelete(debt.id)}
+                        onClick={(e) => { e.stopPropagation(); onDelete(debt.id); }}
                         className="text-zinc-600 hover:text-red-400 text-xs flex items-center gap-1"
                       >
                         <Trash2 size={12} /> Delete

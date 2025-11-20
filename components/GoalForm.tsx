@@ -3,16 +3,17 @@ import { Goal } from '../types';
 import { Target, TrendingUp, Crown } from 'lucide-react';
 
 interface GoalFormProps {
-  onSave: (goal: Omit<Goal, 'id'>) => void;
+  onSave: (goal: Omit<Goal, 'id'>, existingId?: string) => void;
   onCancel: () => void;
+  goal?: Goal;
 }
 
-export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel }) => {
-  const [name, setName] = useState('');
-  const [targetAmount, setTargetAmount] = useState('');
-  const [currentAmount, setCurrentAmount] = useState('');
-  const [monthlyContribution, setMonthlyContribution] = useState('');
-  const [deadline, setDeadline] = useState('');
+export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal }) => {
+  const [name, setName] = useState(goal?.name ?? '');
+  const [targetAmount, setTargetAmount] = useState(goal ? goal.targetAmount.toString() : '');
+  const [currentAmount, setCurrentAmount] = useState(goal ? goal.currentAmount.toString() : '');
+  const [monthlyContribution, setMonthlyContribution] = useState(goal?.monthlyContribution?.toString() ?? '');
+  const [deadline, setDeadline] = useState(goal?.deadline ? goal.deadline.split('T')[0] : '');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,10 +24,10 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel }) => {
       targetAmount: parseFloat(targetAmount),
       currentAmount: parseFloat(currentAmount) || 0,
       deadline,
-      icon: '🎯',
+      icon: goal?.icon ?? '🎯',
       monthlyContribution: parseFloat(monthlyContribution) || 0,
-      startDate: new Date().toISOString()
-    });
+      startDate: goal?.startDate ?? new Date().toISOString()
+    }, goal?.id);
   };
 
   return (
@@ -96,7 +97,9 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel }) => {
 
       <div className="flex gap-3 pt-2">
         <button type="button" onClick={onCancel} className="flex-1 h-12 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-400 font-bold text-xs uppercase tracking-wide rounded-lg transition-colors">Cancel</button>
-        <button type="submit" className="flex-1 h-12 bg-white hover:bg-zinc-200 text-zinc-950 font-bold text-xs uppercase tracking-wide rounded-lg shadow-lg transition-colors">Create</button>
+        <button type="submit" className="flex-1 h-12 bg-white hover:bg-zinc-200 text-zinc-950 font-bold text-xs uppercase tracking-wide rounded-lg shadow-lg transition-colors">
+          {goal ? 'Update' : 'Create'}
+        </button>
       </div>
     </form>
   );

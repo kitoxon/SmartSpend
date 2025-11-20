@@ -6,9 +6,10 @@ interface GoalListProps {
   goals: Goal[];
   onDelete: (id: string) => void;
   onAddFundsClick: (id: string) => void;
+  onEdit: (goal: Goal) => void;
 }
 
-export const GoalList: React.FC<GoalListProps> = ({ goals, onDelete, onAddFundsClick }) => {
+export const GoalList: React.FC<GoalListProps> = ({ goals, onDelete, onAddFundsClick, onEdit }) => {
   const formatJPY = (val: number) => `¥${val.toLocaleString()}`;
 
   if (goals.length === 0) {
@@ -43,7 +44,7 @@ export const GoalList: React.FC<GoalListProps> = ({ goals, onDelete, onAddFundsC
         const projection = getProjection(goal);
         
         return (
-          <div key={goal.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-5 shadow-sm relative overflow-hidden group">
+          <div key={goal.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-5 shadow-sm relative overflow-hidden group cursor-pointer" onClick={() => onEdit(goal)}>
             <div className="flex justify-between items-start mb-4 relative z-10">
               <div className="flex items-center gap-3">
                 <div className={`p-2 rounded-md border ${percentage >= 100 ? 'bg-zinc-100 border-zinc-200 text-zinc-900' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}>
@@ -60,7 +61,7 @@ export const GoalList: React.FC<GoalListProps> = ({ goals, onDelete, onAddFundsC
                   </div>
                 </div>
               </div>
-              <button onClick={() => onDelete(goal.id)} className="text-zinc-600 hover:text-zinc-400 p-1"><Trash2 size={14} /></button>
+              <button onClick={(e) => { e.stopPropagation(); onDelete(goal.id); }} className="text-zinc-600 hover:text-zinc-400 p-1"><Trash2 size={14} /></button>
             </div>
 
             <div className="mb-2 relative z-10">

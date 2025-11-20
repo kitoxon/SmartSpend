@@ -3,19 +3,20 @@ import { Debt, DebtType, DebtCategory } from '../types';
 import { ShieldAlert } from 'lucide-react';
 
 interface DebtFormProps {
-  onSave: (debt: Omit<Debt, 'id' | 'isPaid'>) => void;
+  onSave: (debt: Omit<Debt, 'id' | 'isPaid'>, existingId?: string) => void;
   onCancel: () => void;
+  debt?: Debt;
 }
 
-export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel }) => {
-  const [amount, setAmount] = useState('');
-  const [person, setPerson] = useState('');
-  const [description, setDescription] = useState('');
-  const [dueDate, setDueDate] = useState(new Date().toISOString().split('T')[0]);
+export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt }) => {
+  const [amount, setAmount] = useState(debt ? debt.amount.toString() : '');
+  const [person, setPerson] = useState(debt?.person ?? '');
+  const [description, setDescription] = useState(debt?.description ?? '');
+  const [dueDate, setDueDate] = useState(debt ? debt.dueDate.split('T')[0] : new Date().toISOString().split('T')[0]);
   const type: DebtType = 'payable';
-  const [category, setCategory] = useState<DebtCategory>('Credit Card');
-  const [interestRate, setInterestRate] = useState('');
-  const [minimumPayment, setMinimumPayment] = useState('');
+  const [category, setCategory] = useState<DebtCategory>(debt?.debtCategory ?? 'Credit Card');
+  const [interestRate, setInterestRate] = useState(debt?.interestRate?.toString() ?? '');
+  const [minimumPayment, setMinimumPayment] = useState(debt?.minimumPayment?.toString() ?? '');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,7 +31,7 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel }) => {
       debtCategory: category,
       interestRate: interestRate ? parseFloat(interestRate) : undefined,
       minimumPayment: minimumPayment ? parseFloat(minimumPayment) : undefined,
-    });
+    }, debt?.id);
   };
 
   return (
@@ -111,7 +112,9 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel }) => {
 
       <div className="flex gap-3 pt-2">
         <button type="button" onClick={onCancel} className="flex-1 h-12 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-400 font-bold text-xs uppercase tracking-wide rounded-lg transition-colors">Cancel</button>
-        <button type="submit" className="flex-1 h-12 bg-white hover:bg-zinc-200 text-zinc-950 font-bold text-xs uppercase tracking-wide rounded-lg shadow-lg transition-colors">Add Debt</button>
+        <button type="submit" className="flex-1 h-12 bg-white hover:bg-zinc-200 text-zinc-950 font-bold text-xs uppercase tracking-wide rounded-lg shadow-lg transition-colors">
+          {debt ? 'Update Debt' : 'Add Debt'}
+        </button>
       </div>
     </form>
   );

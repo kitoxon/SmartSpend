@@ -6,24 +6,36 @@ import { Repeat, TrendingDown, TrendingUp } from 'lucide-react';
 import { saveRecurringTransaction } from '../services/storageService';
 
 interface TransactionFormProps {
-  onSave: (transaction: Omit<Transaction, 'id'>) => void;
+  onSave: (transaction: Omit<Transaction, 'id'>, existingId?: string) => void;
   onCancel: () => void;
+  transaction?: Transaction;
 }
 
-export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel }) => {
-  const [type, setType] = useState<TransactionType>('expense');
-  const [amount, setAmount] = useState('');
-  const [description, setDescription] = useState('');
-  const [category, setCategory] = useState<Category>(Category.Other);
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, transaction }) => {
+  const [type, setType] = useState<TransactionType>(transaction?.type ?? 'expense');
+  const [amount, setAmount] = useState(transaction ? transaction.amount.toString() : '');
+  const [description, setDescription] = useState(transaction?.description ?? '');
+  const [category, setCategory] = useState<Category>(transaction?.category ?? Category.Other);
+  const [date, setDate] = useState(transaction ? transaction.date.split('T')[0] : new Date().toISOString().split('T')[0]);
   
   const [isRecurring, setIsRecurring] = useState(false);
   const [frequency, setFrequency] = useState<'weekly' | 'monthly'>('monthly');
 
   useEffect(() => {
+    if (transaction) {
+      setType(transaction.type);
+      setAmount(transaction.amount.toString());
+      setDescription(transaction.description);
+      setCategory(transaction.category);
+      setDate(transaction.date.split('T')[0]);
+    }
+  }, [transaction]);
+
+  useEffect(() => {
+    if (transaction) return;
     if (type === 'income') setCategory(Category.Salary);
     else setCategory(Category.Food);
-  }, [type]);
+  }, [type, transaction]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,7 +57,7 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel }
        await saveRecurringTransaction(rule);
     }
 
-    onSave({ amount: numericAmount, description, category, date: new Date(date).toISOString(), type });
+    onSave({ amount: numericAmount, description, category, date: new Date(date).toISOString(), type }, transaction?.id);
   };
 
   const categoriesToShow = type === 'expense' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
