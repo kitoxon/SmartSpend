@@ -13,18 +13,22 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ debts, monthlyFreeCashFl
   const [customBudget, setCustomBudget] = useState<string>('');
   const [strategy, setStrategy] = useState<'avalanche' | 'snowball'>('avalanche');
   const [inputWarning, setInputWarning] = useState<string | null>(null);
+  const [hasLoadedPrefs, setHasLoadedPrefs] = useState(false);
 
   useEffect(() => {
-    const cached = localStorage.getItem('smartspend_payoff_budget');
-    if (cached && !customBudget) setCustomBudget(cached);
+    if (hasLoadedPrefs) return;
+    const cachedBudget = localStorage.getItem('smartspend_payoff_budget');
+    if (cachedBudget) {
+      setCustomBudget(cachedBudget);
+    } else if (monthlyFreeCashFlow > 0) {
+      setCustomBudget(monthlyFreeCashFlow.toString());
+    }
     const cachedStrategy = localStorage.getItem('smartspend_payoff_strategy');
     if (cachedStrategy === 'snowball' || cachedStrategy === 'avalanche') {
       setStrategy(cachedStrategy);
     }
-    if (!customBudget && monthlyFreeCashFlow > 0) {
-      setCustomBudget(monthlyFreeCashFlow.toString());
-    }
-  }, [monthlyFreeCashFlow, customBudget]);
+    setHasLoadedPrefs(true);
+  }, [monthlyFreeCashFlow, hasLoadedPrefs]);
 
   const calculateDebtPayoff = () => {
     const budget = parseFloat(customBudget);
@@ -142,7 +146,10 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ debts, monthlyFreeCashFl
               <input
                 type="number"
                 value={customBudget}
-                onChange={(e) => setCustomBudget(e.target.value)}
+                onChange={(e) => {
+                  setCustomBudget(e.target.value);
+                  setHasLoadedPrefs(true);
+                }}
                 placeholder="50000"
                 className="w-full bg-zinc-950 border border-zinc-800 text-white p-3.5 rounded-lg focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 font-bold outline-none"
               />
