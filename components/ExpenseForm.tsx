@@ -139,7 +139,7 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel }
       </div>
 
       {/* Date & Recurring */}
-      <div className="flex gap-3">
+      <div className="flex gap-3 items-end">
         <div className="flex-1">
             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Date</label>
             <input
@@ -151,7 +151,7 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel }
             />
         </div>
         <div>
-             <label className="block text-[10px] font-bold text-transparent uppercase tracking-wider mb-1.5">Repeat</label>
+             <label className="block text-[10px] font-bold text-transparent uppercase tracking-wider mb-1.5 select-none">Repeat</label>
              <button 
                type="button"
                onClick={() => setIsRecurring(!isRecurring)}

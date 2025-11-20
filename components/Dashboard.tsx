@@ -225,7 +225,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
                     cx="50%"
                     cy="50%"
                     innerRadius={60}
-                    outerRadius={90}
+                    outerRadius={80} 
                     paddingAngle={4}
                     dataKey="value"
                     stroke="none"
@@ -241,7 +241,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
                   />
                   <Legend 
                     iconType="circle" 
-                    wrapperStyle={{ fontSize: '10px', fontFamily: 'Manrope', color: '#71717a', paddingTop: '32px' }} 
+                    wrapperStyle={{ fontSize: '10px', fontFamily: 'Manrope', color: '#71717a', paddingTop: '24px' }} 
                   />
                 </PieChart>
               </ResponsiveContainer>
