@@ -2,8 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Category, Transaction, TransactionType, RecurringTransaction } from '../types';
 import { INCOME_CATEGORIES, EXPENSE_CATEGORIES } from '../constants';
-import { suggestCategory } from '../services/geminiService';
-import { Loader2, Repeat, TrendingDown, TrendingUp } from 'lucide-react';
+import { Repeat, TrendingDown, TrendingUp } from 'lucide-react';
 import { saveRecurringTransaction } from '../services/storageService';
 
 interface TransactionFormProps {
@@ -17,23 +16,9 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel }
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState<Category>(Category.Other);
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [isAutoCategorizing, setIsAutoCategorizing] = useState(false);
   
   const [isRecurring, setIsRecurring] = useState(false);
   const [frequency, setFrequency] = useState<'weekly' | 'monthly'>('monthly');
-
-  useEffect(() => {
-    if (type === 'income') return; 
-    const timer = setTimeout(async () => {
-      if (description.length > 3 && !isAutoCategorizing) {
-        setIsAutoCategorizing(true);
-        const suggested = await suggestCategory(description);
-        if (suggested) setCategory(suggested);
-        setIsAutoCategorizing(false);
-      }
-    }, 800);
-    return () => clearTimeout(timer);
-  }, [description, type]);
 
   useEffect(() => {
     if (type === 'income') setCategory(Category.Salary);
@@ -119,11 +104,6 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel }
           placeholder={type === 'expense' ? "e.g., Dinner" : "e.g., Salary"}
           className="w-full h-12 px-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500 transition-all text-zinc-200 placeholder-zinc-600 outline-none text-sm"
         />
-        {isAutoCategorizing && (
-          <div className="absolute right-3 top-9 text-zinc-500">
-            <Loader2 size={16} className="animate-spin" />
-          </div>
-        )}
       </div>
 
       {/* Category */}
