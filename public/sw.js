@@ -79,7 +79,15 @@ self.addEventListener('fetch', (event) => {
     (url.pathname.startsWith('/assets/') ||
       ['script', 'style', 'font', 'image'].includes(request.destination));
 
-  if (sameOriginAsset) {
+  const cdnHosts = [
+    'fonts.googleapis.com',
+    'fonts.gstatic.com',
+    'cdn.tailwindcss.com',
+    'aistudiocdn.com',
+  ];
+  const isCDN = cdnHosts.includes(url.hostname);
+
+  if (sameOriginAsset || isCDN) {
     event.respondWith(staleWhileRevalidate(request));
   }
 });

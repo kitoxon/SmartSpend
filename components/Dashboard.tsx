@@ -1,11 +1,11 @@
 
-import React, { useState, useMemo } from 'react';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend } from 'recharts';
+import React, { useState, useMemo, Suspense } from 'react';
 import { Transaction, Category, Debt } from '../types';
-import { CATEGORY_COLORS } from '../constants';
 import { CategoryIcon } from './ui/CategoryIcon';
 import { Wallet, ShieldAlert, Landmark, TrendingUp, History, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { AIInsights } from './AIInsights';
+const CashFlowChart = React.lazy(() => import('./charts/CashFlowChart'));
+const CategoryChart = React.lazy(() => import('./charts/CategoryChart'));
 
 interface DashboardProps {
   transactions: Transaction[];
@@ -142,12 +142,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
   
   const formatJPY = (amount: number) => `¥${amount.toLocaleString()}`;
 
-  // Stoic Bar Colors
-  const BAR_COLORS = {
-    income: '#ffffff', 
-    expense: '#71717a', // Zinc 500
-  };
-
   return (
     <div className="space-y-6 pb-32">
       
@@ -225,61 +219,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
               <TrendingUp size={12} /> Cash Flow Trend
             </h3>
           </div>
-          <div className="h-40 w-full min-w-0 min-h-0">
-            <ResponsiveContainer width="100%" height="100%" style={{ minWidth: 0, minHeight: 0 }}>
-              <BarChart data={trendChartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: '#71717a', fontFamily: 'Manrope' }} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 9, fill: '#71717a', fontFamily: 'Manrope' }} />
-                <Tooltip 
-                  cursor={{ fill: '#27272a', opacity: 0.4 }}
-                  contentStyle={{ backgroundColor: '#18181b', borderRadius: '6px', border: '1px solid #27272a', color: '#e4e4e7', fontFamily: 'Manrope', fontSize: '11px' }}
-                  itemStyle={{ color: '#e4e4e7' }}
-                  formatter={(value: number) => [formatJPY(value)]}
-                />
-                <Bar dataKey="income" name="Income" fill={BAR_COLORS.income} radius={[2, 2, 0, 0]} barSize={8} />
-                <Bar dataKey="expense" name="Expense" fill={BAR_COLORS.expense} radius={[2, 2, 0, 0]} barSize={8} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <Suspense fallback={<div className="text-[10px] text-zinc-600">Loading chart...</div>}>
+            <CashFlowChart data={trendChartData} formatJPY={formatJPY} />
+          </Suspense>
         </div>
 
         {/* Category Chart */}
         <div className="bg-zinc-900 p-5 rounded-xl border border-zinc-800">
           <h3 className="font-bold text-zinc-500 text-[10px] uppercase tracking-wider mb-4">Category Breakdown</h3>
-          <div className="h-64 w-full min-w-0 min-h-0">
-            {categoryData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%" style={{ minWidth: 0, minHeight: 0 }}>
-                <PieChart>
-                  <Pie
-                    data={categoryData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80} 
-                    paddingAngle={4}
-                    dataKey="value"
-                    stroke="none"
-                  >
-                    {categoryData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={CATEGORY_COLORS[entry.name as Category]} />
-                    ))}
-                  </Pie>
-                  <Tooltip 
-                    formatter={(value: number) => [formatJPY(value), 'Amount']} 
-                    contentStyle={{ backgroundColor: '#18181b', borderRadius: '6px', border: '1px solid #27272a', color: '#fff', fontFamily: 'Manrope', fontSize: '11px' }}
-                    itemStyle={{ color: '#fff' }} 
-                  />
-                  <Legend 
-                    iconType="circle" 
-                    wrapperStyle={{ fontSize: '10px', fontFamily: 'Manrope', color: '#71717a', paddingTop: '24px' }} 
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full flex items-center justify-center text-zinc-700 text-xs">No activity</div>
-            )}
-          </div>
+          <Suspense fallback={<div className="text-[10px] text-zinc-600">Loading chart...</div>}>
+            <CategoryChart data={categoryData} formatJPY={formatJPY} />
+          </Suspense>
         </div>
       </div>
 

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { ViewState, Transaction, Debt, Goal, Category } from './types';
 import { 
   getTransactions, saveTransaction, deleteTransaction, 
@@ -7,15 +7,17 @@ import {
   getGoals, saveGoal, deleteGoal,
   processRecurringTransactions
 } from './services/storageService';
-import { Dashboard } from './components/Dashboard';
-import { ExpenseList } from './components/ExpenseList';
+import { MOCK_DEBTS_IF_EMPTY, MOCK_GOALS_IF_EMPTY } from './constants';
 import { ExpenseForm } from './components/ExpenseForm';
-import { DebtList } from './components/DebtList';
 import { DebtForm } from './components/DebtForm';
-import { GoalList } from './components/GoalList';
 import { GoalForm } from './components/GoalForm';
 import { Modal } from './components/ui/Modal';
 import { LayoutDashboard, List as ListIcon, Plus, Wallet, ArrowRightLeft, Target, DollarSign, TrendingDown, TrendingUp, ShieldAlert, Landmark } from 'lucide-react';
+
+const Dashboard = React.lazy(() => import('./components/Dashboard').then(m => ({ default: m.Dashboard })));
+const ExpenseList = React.lazy(() => import('./components/ExpenseList').then(m => ({ default: m.ExpenseList })));
+const DebtList = React.lazy(() => import('./components/DebtList').then(m => ({ default: m.DebtList })));
+const GoalList = React.lazy(() => import('./components/GoalList').then(m => ({ default: m.GoalList })));
 
 const App: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -44,16 +46,14 @@ const App: React.FC = () => {
       setTransactions(txs);
       
       if (dbs.length === 0) {
-         const mockDebts = (await import('./constants')).MOCK_DEBTS_IF_EMPTY;
-         const validMocks = mockDebts.filter(d => d.type === 'payable');
+         const validMocks = MOCK_DEBTS_IF_EMPTY.filter(d => d.type === 'payable');
          setDebts(validMocks);
       } else {
          setDebts(dbs);
       }
 
       if (gls.length === 0) {
-          const mockGoals = (await import('./constants')).MOCK_GOALS_IF_EMPTY;
-          setGoals(mockGoals);
+          setGoals(MOCK_GOALS_IF_EMPTY);
       } else {
           setGoals(gls);
       }
@@ -224,10 +224,12 @@ const App: React.FC = () => {
       </header>
 
       <main className="p-4 min-h-[calc(100vh-140px)] relative z-10">
-        {currentView === 'dashboard' && <Dashboard transactions={transactions} debts={debts} />}
-        {currentView === 'list' && <ExpenseList expenses={transactions} onDelete={handleDeleteTransaction} />}
-        {currentView === 'debts' && <DebtList debts={debts} onDelete={handleDeleteDebt} onToggleStatus={handleOpenPayDebt} />}
-        {currentView === 'goals' && <GoalList goals={goals} onDelete={handleDeleteGoal} onAddFundsClick={handleOpenAddFunds} />}
+        <Suspense fallback={<div className="text-sm text-zinc-500">Loading...</div>}>
+          {currentView === 'dashboard' && <Dashboard transactions={transactions} debts={debts} />}
+          {currentView === 'list' && <ExpenseList expenses={transactions} onDelete={handleDeleteTransaction} />}
+          {currentView === 'debts' && <DebtList debts={debts} onDelete={handleDeleteDebt} onToggleStatus={handleOpenPayDebt} />}
+          {currentView === 'goals' && <GoalList goals={goals} onDelete={handleDeleteGoal} onAddFundsClick={handleOpenAddFunds} />}
+        </Suspense>
       </main>
 
       {/* FAB - anchored to app container width */}

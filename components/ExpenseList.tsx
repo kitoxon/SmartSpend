@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Transaction, Category } from '../types';
 import { CATEGORY_COLORS, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../constants';
 import { CategoryIcon } from './ui/CategoryIcon';
@@ -19,6 +19,8 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
   const [selectedCategory, setSelectedCategory] = useState<Category | 'All'>('All');
   const [sortBy, setSortBy] = useState<SortOption>('date-new');
   const [showFilters, setShowFilters] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(20);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
   
   // Filters
   const [dateRange, setDateRange] = useState<DateRangeOption>('thisMonth');
@@ -83,10 +85,20 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
     return result;
   }, [transactions, searchTerm, selectedCategory, sortBy, dateRange, typeFilter, customStart, customEnd]);
 
+  const displayTransactions = useMemo(
+    () => processedTransactions.slice(0, visibleCount),
+    [processedTransactions, visibleCount]
+  );
+
+  const displayTotalAmount = useMemo(
+    () => displayTransactions.reduce((sum, t) => sum + t.amount, 0),
+    [displayTransactions]
+  );
+
   const groupedTransactions = useMemo(() => {
     if (sortBy.includes('amount')) return null;
 
-    return processedTransactions.reduce((acc, t) => {
+    return displayTransactions.reduce((acc, t) => {
       const dateKey = new Date(t.date).toLocaleDateString(undefined, {
         weekday: 'short', month: 'short', day: 'numeric'
       });
@@ -94,7 +106,33 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
       acc[dateKey].push(t);
       return acc;
     }, {} as Record<string, Transaction[]>);
-  }, [processedTransactions, sortBy]);
+  }, [displayTransactions, sortBy]);
+
+  // Reset pagination when filters change
+  useEffect(() => {
+    setVisibleCount(20);
+  }, [searchTerm, selectedCategory, sortBy, dateRange, typeFilter, customStart, customEnd, transactions]);
+
+  // Infinite scroll observer
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const first = entries[0];
+        if (first.isIntersecting) {
+          setVisibleCount((prev) => Math.min(prev + 20, processedTransactions.length));
+        }
+      },
+      { threshold: 1 }
+    );
+    const current = loadMoreRef.current;
+    if (current) observer.observe(current);
+    return () => {
+      if (current) observer.unobserve(current);
+      observer.disconnect();
+    };
+  }, [processedTransactions.length]);
+
+  const totalFilteredCount = processedTransactions.length;
 
   const renderItem = (item: Transaction, showDateLabel = false) => (
     <div key={item.id} className="flex items-center p-4 hover:bg-zinc-900/80 transition-colors group border-b border-zinc-800 last:border-0">
@@ -253,6 +291,13 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
 
       {/* Transaction List */}
       <div className="min-h-[300px]">
+        <div className="flex items-center justify-between text-[10px] text-zinc-500 px-1 mb-2">
+          <span className="font-bold">Showing {displayTransactions.length} of {totalFilteredCount}</span>
+          <div className="flex items-center gap-3">
+            <span className="text-zinc-400 font-bold tabular-nums">Total ¥{displayTotalAmount.toLocaleString()}</span>
+            {selectedCategory !== 'All' && <span className="text-zinc-500">{selectedCategory}</span>}
+          </div>
+        </div>
         {processedTransactions.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-zinc-700">
             <div className="w-12 h-12 rounded-full bg-zinc-900 flex items-center justify-center mb-3 border border-zinc-800">
@@ -274,9 +319,10 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
           ))
         ) : (
           <div className="bg-zinc-900/30 rounded-xl border border-zinc-900/50 overflow-hidden animate-fade-in">
-            {processedTransactions.map(t => renderItem(t, true))}
+            {displayTransactions.map(t => renderItem(t, true))}
           </div>
         )}
+        <div ref={loadMoreRef} className="h-8" />
       </div>
     </div>
   );
