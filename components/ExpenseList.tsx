@@ -125,7 +125,7 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
         <span className={`font-bold text-sm tabular-nums ${item.type === 'income' ? 'text-white' : 'text-zinc-500'}`}>
           {item.type === 'income' ? '+' : ''}¥{item.amount.toLocaleString()}
         </span>
-        <button onClick={() => onDelete(item.id)} className="text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all mt-1 p-1">
+        <button onClick={() => onDelete(item.id)} className="text-zinc-600 hover:text-red-400 transition-all mt-1 p-1">
           <Trash2 size={12} />
         </button>
       </div>

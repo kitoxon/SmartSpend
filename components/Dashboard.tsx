@@ -18,6 +18,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
   const [timeRange, setTimeRange] = useState<TimeRange>('month');
 
   // --- 1. Date Calculations Helpers ---
+  const getStartOfWeek = (date: Date) => {
+    const start = new Date(date);
+    const day = start.getDay();
+    const diff = day === 0 ? -6 : 1 - day; // Monday start
+    start.setDate(start.getDate() + diff);
+    start.setHours(0, 0, 0, 0);
+    return start;
+  };
+
   const isSameDay = (d1: Date, d2: Date) => 
     d1.getFullYear() === d2.getFullYear() && 
     d1.getMonth() === d2.getMonth() && 
@@ -25,9 +34,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
 
   const isThisWeek = (date: Date) => {
     const today = new Date();
-    const startOfWeek = new Date(today);
-    startOfWeek.setDate(today.getDate() - today.getDay() + (today.getDay() === 0 ? -6 : 1)); // Start Monday
-    startOfWeek.setHours(0, 0, 0, 0);
+    const startOfWeek = getStartOfWeek(today);
     return date >= startOfWeek;
   };
 
@@ -71,9 +78,33 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
 
   // --- 5. Income vs Expense Monthly Trend Chart ---
   const trendChartData = useMemo(() => {
-    const data: Record<string, { name: string; income: number; expense: number }> = {};
     const now = new Date();
-    
+
+    if (timeRange === 'today' || timeRange === 'week') {
+      const startOfWeek = getStartOfWeek(now);
+      const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+      return labels.map((label, index) => {
+        const day = new Date(startOfWeek);
+        day.setDate(startOfWeek.getDate() + index);
+
+        const dayTotals = transactions
+          .filter(t => isSameDay(new Date(t.date), day))
+          .reduce(
+            (acc, t) => {
+              if (t.type === 'income') acc.income += t.amount;
+              else acc.expense += t.amount;
+              return acc;
+            },
+            { income: 0, expense: 0 }
+          );
+
+        return { name: label, income: dayTotals.income, expense: dayTotals.expense };
+      });
+    }
+
+    const data: Record<string, { name: string; income: number; expense: number }> = {};
+
     // Initialize last 6 months
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -91,7 +122,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
     });
 
     return Object.values(data);
-  }, [transactions]);
+  }, [transactions, timeRange]);
 
   // --- 6. Category Pie Data ---
   const categoryData = Object.values(Category).map(cat => {

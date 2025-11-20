@@ -10,10 +10,17 @@ interface AIInsightsProps {
 // Debt payoff-only widget (Avalanche).
 export const AIInsights: React.FC<AIInsightsProps> = ({ debts, monthlyFreeCashFlow }) => {
   const [debtForecast, setDebtForecast] = useState<DebtForecast | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [customBudget, setCustomBudget] = useState<string>('');
+  const [strategy, setStrategy] = useState<'avalanche' | 'snowball'>('avalanche');
+  const [inputWarning, setInputWarning] = useState<string | null>(null);
 
   useEffect(() => {
+    const cached = localStorage.getItem('smartspend_payoff_budget');
+    if (cached && !customBudget) setCustomBudget(cached);
+    const cachedStrategy = localStorage.getItem('smartspend_payoff_strategy');
+    if (cachedStrategy === 'snowball' || cachedStrategy === 'avalanche') {
+      setStrategy(cachedStrategy);
+    }
     if (!customBudget && monthlyFreeCashFlow > 0) {
       setCustomBudget(monthlyFreeCashFlow.toString());
     }
@@ -22,10 +29,10 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ debts, monthlyFreeCashFl
   const calculateDebtPayoff = () => {
     const budget = parseFloat(customBudget);
     if (isNaN(budget) || budget <= 0) {
-      setError('Please enter a valid monthly budget.');
+      setInputWarning('Please enter a valid monthly budget.');
       return;
     }
-    setError(null);
+    setInputWarning(null);
 
     const activeDebts = debts
       .filter((d) => d.type === 'payable' && !d.isPaid)
@@ -46,7 +53,17 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ debts, monthlyFreeCashFl
       return;
     }
 
-    activeDebts.sort((a, b) => b.rate - a.rate);
+    const totalMin = activeDebts.reduce((sum, d) => sum + d.minPay, 0);
+    if (budget < totalMin) {
+      setInputWarning(`Budget must cover minimums (need ¥${Math.round(totalMin).toLocaleString()}).`);
+      return;
+    }
+
+    if (strategy === 'avalanche') {
+      activeDebts.sort((a, b) => b.rate - a.rate);
+    } else {
+      activeDebts.sort((a, b) => a.currentBalance - b.currentBalance);
+    }
 
     let months = 0;
     let totalInterestAccrued = 0;
@@ -89,19 +106,26 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ debts, monthlyFreeCashFl
     const futureDate = new Date();
     futureDate.setMonth(futureDate.getMonth() + months);
 
+    localStorage.setItem('smartspend_payoff_budget', customBudget);
+    localStorage.setItem('smartspend_payoff_strategy', strategy);
+
     setDebtForecast({
       estimatedDebtFreeDate:
         months >= maxMonths ? 'Over 50 Years' : futureDate.toLocaleDateString('default', { month: 'long', year: 'numeric' }),
       monthlyPaymentRecommendation: budget,
-      strategy: 'Avalanche (Highest Interest First)',
+      strategy: strategy === 'avalanche' ? 'Avalanche (Highest Interest First)' : 'Snowball (Smallest Balance First)',
       interestWarning: `Total Interest Cost: ¥${Math.round(totalInterestAccrued).toLocaleString()}`,
       actionPlan: [
-        `Focus extra payments on: ${activeDebts[0].person} (${activeDebts[0].rate}%)`,
+        strategy === 'avalanche'
+          ? `Focus extra payments on: ${activeDebts[0].person} (${activeDebts[0].rate}%)`
+          : `Focus first on smallest balance: ${activeDebts[0].person} (${formatCurrency(activeDebts[0].currentBalance)})`,
         `Time to debt free: ${months} months`,
         `Keep monthly budget steady at ¥${budget.toLocaleString()}`,
       ],
     });
   };
+
+  const formatCurrency = (value: number) => `¥${Math.round(value).toLocaleString()}`;
 
   return (
     <div className="space-y-6">
@@ -127,6 +151,31 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ debts, monthlyFreeCashFl
                   <Wallet size={10} /> Current Free Cash Flow: ¥{monthlyFreeCashFlow.toLocaleString()}
                 </p>
               )}
+              {inputWarning && (
+                <p className="text-[10px] text-red-400 mt-2 leading-tight flex items-start gap-1.5">
+                  <AlertCircle size={12} className="mt-0.5" /> {inputWarning}
+                </p>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setStrategy('avalanche')}
+                className={`h-11 rounded-lg border text-[10px] font-bold uppercase tracking-wide transition-all ${
+                  strategy === 'avalanche' ? 'bg-white text-black border-zinc-200' : 'bg-zinc-950 text-zinc-500 border-zinc-800'
+                }`}
+              >
+                Avalanche
+              </button>
+              <button
+                type="button"
+                onClick={() => setStrategy('snowball')}
+                className={`h-11 rounded-lg border text-[10px] font-bold uppercase tracking-wide transition-all ${
+                  strategy === 'snowball' ? 'bg-white text-black border-zinc-200' : 'bg-zinc-950 text-zinc-500 border-zinc-800'
+                }`}
+              >
+                Snowball
+              </button>
             </div>
             <button
               onClick={calculateDebtPayoff}
@@ -135,12 +184,6 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ debts, monthlyFreeCashFl
               Calculate Plan
             </button>
           </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="flex items-center gap-2 text-danger bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-xs text-red-200">
-          <AlertCircle size={14} /> {error}
         </div>
       )}
 
@@ -202,9 +245,9 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ debts, monthlyFreeCashFl
             </div>
             <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4">
               <div className="flex items-center gap-2 text-zinc-400 mb-1">
-                <Landmark size={14} /> <span className="text-[11px] uppercase font-bold tracking-wide">Stay the course</span>
+                <Landmark size={14} /> <span className="text-[11px] uppercase font-bold tracking-wide">Snowball</span>
               </div>
-              <p className="text-xs text-zinc-500">Keep payments steady; adjust when balances drop.</p>
+              <p className="text-xs text-zinc-500">Smallest balance first to build momentum.</p>
             </div>
           </div>
         </div>

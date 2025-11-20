@@ -32,6 +32,33 @@ export const DebtList: React.FC<DebtListProps> = ({ debts, onDelete, onToggleSta
 
   const formatJPY = (amount: number) => `¥${amount.toLocaleString()}`;
 
+  const getPayoffProjection = (debt: Debt) => {
+    const minPay = debt.minimumPayment ?? 0;
+    if (minPay <= 0 || debt.amount <= 0) return null;
+
+    const monthlyRate = (debt.interestRate ?? 0) / 100 / 12;
+    let balance = debt.amount;
+    let months = 0;
+    const maxMonths = 600;
+
+    // If payment does not cover interest, warn about negative amortization.
+    if (monthlyRate > 0 && minPay <= balance * monthlyRate) {
+      return { text: 'Increase payment (interest > min)' };
+    }
+
+    while (balance > 1 && months < maxMonths) {
+      balance += balance * monthlyRate;
+      balance -= minPay;
+      months++;
+    }
+
+    if (months >= maxMonths) return { text: 'Increase payment (too long)' };
+
+    const payoffDate = new Date();
+    payoffDate.setMonth(payoffDate.getMonth() + months);
+    return { text: `Paid off by ${payoffDate.toLocaleDateString()}` };
+  };
+
   return (
     <div className="space-y-4 pb-24">
       {/* Summary Card - Minimal */}
@@ -48,7 +75,9 @@ export const DebtList: React.FC<DebtListProps> = ({ debts, onDelete, onToggleSta
         </div>
       ) : (
         <div className="space-y-3">
-          {sortedDebts.map((debt) => (
+          {sortedDebts.map((debt) => {
+            const projection = getPayoffProjection(debt);
+            return (
             <div 
               key={debt.id} 
               className={`p-4 rounded-lg border transition-all flex flex-col gap-3 group relative overflow-hidden ${
@@ -99,12 +128,17 @@ export const DebtList: React.FC<DebtListProps> = ({ debts, onDelete, onToggleSta
                       >
                         <Trash2 size={12} /> Delete
                    </button>
-                   
-                   <div className="flex items-center gap-3">
-                      {debt.minimumPayment && (
-                        <span className="text-[10px] text-zinc-500 tabular-nums">
-                            Min: {formatJPY(debt.minimumPayment)}
-                        </span>
+                  
+                  <div className="flex items-center gap-3">
+                     {debt.minimumPayment && (
+                        <div className="flex flex-col text-[10px] text-zinc-500 tabular-nums">
+                            <span>Min: {formatJPY(debt.minimumPayment)}</span>
+                            {projection && (
+                              <span className="flex items-center gap-1 text-zinc-400">
+                                <Calendar size={10} /> {projection.text}
+                              </span>
+                            )}
+                        </div>
                       )}
                       <button
                         onClick={() => onToggleStatus(debt.id)}
@@ -112,11 +146,12 @@ export const DebtList: React.FC<DebtListProps> = ({ debts, onDelete, onToggleSta
                       >
                         <Sword size={10} /> Pay
                       </button>
-                   </div>
+                  </div>
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

@@ -60,7 +60,7 @@ export const GoalList: React.FC<GoalListProps> = ({ goals, onDelete, onAddFundsC
                   </div>
                 </div>
               </div>
-              <button onClick={() => onDelete(goal.id)} className="text-zinc-600 hover:text-zinc-400 p-1 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14} /></button>
+              <button onClick={() => onDelete(goal.id)} className="text-zinc-600 hover:text-zinc-400 p-1"><Trash2 size={14} /></button>
             </div>
 
             <div className="mb-2 relative z-10">

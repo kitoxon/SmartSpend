@@ -35,6 +35,7 @@ const App: React.FC = () => {
   const [isPayDebtModalOpen, setIsPayDebtModalOpen] = useState(false);
   const [selectedDebtId, setSelectedDebtId] = useState<string | null>(null);
   const [debtPaymentAmount, setDebtPaymentAmount] = useState('');
+  const [pendingDelete, setPendingDelete] = useState<{ type: 'transaction' | 'debt' | 'goal'; id: string } | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -69,11 +70,8 @@ const App: React.FC = () => {
     setIsExpenseModalOpen(false);
   };
 
-  const handleDeleteTransaction = async (id: string) => {
-    if (window.confirm('Are you sure?')) {
-      setTransactions(prev => prev.filter(e => e.id !== id));
-      await deleteTransaction(id);
-    }
+  const handleDeleteTransaction = (id: string) => {
+    setPendingDelete({ type: 'transaction', id });
   };
 
   const handleAddDebt = async (newDebtData: Omit<Debt, 'id' | 'isPaid'>) => {
@@ -83,11 +81,8 @@ const App: React.FC = () => {
     setIsDebtModalOpen(false);
   };
 
-  const handleDeleteDebt = async (id: string) => {
-    if (window.confirm('Delete debt?')) {
-      setDebts(prev => prev.filter(d => d.id !== id));
-      await deleteDebt(id);
-    }
+  const handleDeleteDebt = (id: string) => {
+    setPendingDelete({ type: 'debt', id });
   };
 
   const handleOpenPayDebt = (id: string) => {
@@ -143,11 +138,26 @@ const App: React.FC = () => {
     setIsGoalModalOpen(false);
   };
 
-  const handleDeleteGoal = async (id: string) => {
-     if (window.confirm('Delete goal?')) {
+  const handleDeleteGoal = (id: string) => {
+    setPendingDelete({ type: 'goal', id });
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    const { type, id } = pendingDelete;
+
+    if (type === 'transaction') {
+      setTransactions(prev => prev.filter(e => e.id !== id));
+      await deleteTransaction(id);
+    } else if (type === 'debt') {
+      setDebts(prev => prev.filter(d => d.id !== id));
+      await deleteDebt(id);
+    } else if (type === 'goal') {
       setGoals(prev => prev.filter(g => g.id !== id));
       await deleteGoal(id);
-     }
+    }
+
+    setPendingDelete(null);
   };
 
   const handleOpenAddFunds = (id: string) => {
@@ -308,6 +318,37 @@ const App: React.FC = () => {
           </div>
           <button type="submit" className="w-full h-12 bg-white hover:bg-zinc-200 text-black font-bold rounded-lg text-xs uppercase tracking-wider shadow-lg">Confirm Payment</button>
         </form>
+      </Modal>
+
+      {/* Delete Confirm */}
+      <Modal
+        isOpen={!!pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        title="Confirm Delete"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-300">
+            {pendingDelete?.type === 'transaction' && 'Delete this transaction?'}
+            {pendingDelete?.type === 'debt' && 'Delete this debt?'}
+            {pendingDelete?.type === 'goal' && 'Delete this goal?'}
+          </p>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setPendingDelete(null)}
+              className="flex-1 h-11 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 font-bold text-xs uppercase tracking-wide rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmDelete}
+              className="flex-1 h-11 bg-red-500 hover:bg-red-400 text-white font-bold text-xs uppercase tracking-wide rounded-lg shadow-lg transition-colors"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
       </Modal>
 
       <style>{`
