@@ -15,7 +15,7 @@ import { DebtForm } from './components/DebtForm';
 import { GoalList } from './components/GoalList';
 import { GoalForm } from './components/GoalForm';
 import { Modal } from './components/ui/Modal';
-import { LayoutDashboard, List as ListIcon, Plus, Wallet, ArrowRightLeft, Target, DollarSign, TrendingDown, TrendingUp, ShieldAlert } from 'lucide-react';
+import { LayoutDashboard, List as ListIcon, Plus, Wallet, ArrowRightLeft, Target, DollarSign, TrendingDown, TrendingUp, ShieldAlert, Landmark } from 'lucide-react';
 
 const App: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -217,7 +217,7 @@ const App: React.FC = () => {
       <header className="bg-black/80 backdrop-blur-md px-5 py-4 sticky top-0 z-20 border-b border-zinc-900 flex items-center justify-between">
         <div className="flex items-center gap-2.5 text-zinc-100">
           <div className="p-1.5 rounded-md bg-zinc-100 text-black">
-             <Wallet className="w-3.5 h-3.5" strokeWidth={3} />
+             <Landmark className="w-3.5 h-3.5" strokeWidth={3} />
           </div>
           <h1 className="text-sm font-bold tracking-wide text-white">SmartSpend</h1>
         </div>
