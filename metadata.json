@@ -1,0 +1,5 @@
+{
+  "name": "SmartSpend",
+  "description": "An intelligent daily expense tracker featuring spending visualization, detailed categorization, and AI-powered financial insights to help you save better.",
+  "requestFramePermissions": []
+}
