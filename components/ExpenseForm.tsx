@@ -12,12 +12,13 @@ interface TransactionFormProps {
 }
 
 export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, transaction }) => {
+  const todayLocal = new Date().toLocaleDateString('en-CA');
+
   const [type, setType] = useState<TransactionType>(transaction?.type ?? 'expense');
   const [amount, setAmount] = useState(transaction ? transaction.amount.toString() : '');
   const [description, setDescription] = useState(transaction?.description ?? '');
   const [category, setCategory] = useState<Category>(transaction?.category ?? Category.Other);
-  const [date, setDate] = useState(transaction ? transaction.date.split('T')[0] : new Date().toISOString().split('T')[0]);
-  
+  const [date, setDate] = useState(transaction ? transaction.date.split('T')[0] : todayLocal);
   const [isRecurring, setIsRecurring] = useState(false);
   const [frequency, setFrequency] = useState<'weekly' | 'monthly'>('monthly');
 
