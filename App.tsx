@@ -234,8 +234,8 @@ const App: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center font-sans">
-        <div className="w-full max-w-md px-4 py-6 space-y-4">
+      <div className="min-h-screen bg-black flex justify-center font-sans">
+        <div className="w-full max-w-md px-4 py-6 space-y-4 min-h-screen">
           <div className="h-10 w-32 bg-zinc-800/70 rounded-full animate-pulse-slow" />
           <div className="bg-zinc-900/60 border border-zinc-800/70 rounded-xl p-5 space-y-4 backdrop-blur-sm">
             <div className="h-4 w-24 bg-zinc-800/70 rounded animate-pulse-slow" />
@@ -246,6 +246,10 @@ const App: React.FC = () => {
           </div>
           <div className="bg-zinc-900/60 border border-zinc-800/70 rounded-xl p-5 space-y-3 backdrop-blur-sm">
             <div className="h-4 w-32 bg-zinc-800/70 rounded animate-pulse-slow" />
+            <div className="h-40 w-full bg-zinc-800/50 rounded-lg animate-pulse-slow" />
+          </div>
+          <div className="bg-zinc-900/60 border border-zinc-800/70 rounded-xl p-5 space-y-3 backdrop-blur-sm">
+            <div className="h-4 w-28 bg-zinc-800/70 rounded animate-pulse-slow" />
             <div className="h-40 w-full bg-zinc-800/50 rounded-lg animate-pulse-slow" />
           </div>
           <div className="bg-zinc-900/60 border border-zinc-800/70 rounded-xl p-5 space-y-3 backdrop-blur-sm">

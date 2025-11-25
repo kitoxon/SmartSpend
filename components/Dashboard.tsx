@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, Suspense, useEffect } from 'react';
+import React, { useState, useMemo, Suspense, useEffect, useRef } from 'react';
 import { Transaction, Category, Debt } from '../types';
 import { CategoryIcon } from './ui/CategoryIcon';
 import { Wallet, ShieldAlert, Landmark, TrendingUp, History, ArrowUpRight, ArrowDownRight, CalendarClock, AlertCircle } from 'lucide-react';
@@ -14,25 +14,37 @@ interface DashboardProps {
 
 type TimeRange = 'today' | 'week' | 'month' | 'all';
 
+const formatJPY = (amount: number) => `¥${amount.toLocaleString()}`;
+
+const CountUp: React.FC<{ value: number }> = ({ value }) => {
+  const [display, setDisplay] = useState(0);
+  const hasAnimated = useRef(false);
+  useEffect(() => {
+    if (hasAnimated.current) {
+      setDisplay(value); // jump to the latest value after the first run
+      return;
+    }
+
+    let frame: number;
+    const duration = 1000;
+    const start = performance.now();
+    const animate = (now: number) => {
+      const progress = Math.min(1, (now - start) / duration);
+      setDisplay(value * progress);
+      if (progress < 1) {
+        frame = requestAnimationFrame(animate);
+      } else {
+        hasAnimated.current = true;
+      }
+    };
+    frame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frame);
+  }, [value]);
+  return <>{formatJPY(Math.round(display))}</>;
+};
+
 export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }) => {
   const [timeRange, setTimeRange] = useState<TimeRange>('month');
-  const CountUp: React.FC<{ value: number }> = ({ value }) => {
-    const [display, setDisplay] = useState(0);
-    useEffect(() => {
-      let frame: number;
-      const duration = 1000;
-      const start = performance.now();
-      const animate = (now: number) => {
-        const progress = Math.min(1, (now - start) / duration);
-        setDisplay(value * progress);
-        if (progress < 1) frame = requestAnimationFrame(animate);
-      };
-      frame = requestAnimationFrame(animate);
-      return () => cancelAnimationFrame(frame);
-    }, [value]);
-    return <>{formatJPY(Math.round(display))}</>;
-  };
-
   // --- 1. Date Calculations Helpers ---
   const getStartOfWeek = (date: Date) => {
     const start = new Date(date);
@@ -155,8 +167,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
   const recentTransactions = transactions.slice(0, 5);
   const activeDebts = debts.filter(d => d.type === 'payable' && !d.isPaid);
   const totalDebt = activeDebts.reduce((sum, d) => sum + d.amount, 0);
-  
-  const formatJPY = (amount: number) => `¥${amount.toLocaleString()}`;
 
   // Debt payoff projection using minimums (Avalanche).
   const debtProjection = useMemo(() => {

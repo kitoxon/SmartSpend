@@ -86,7 +86,7 @@ export const GoalList: React.FC<GoalListProps> = ({ goals, onDelete, onAddFundsC
 
             <div className="flex justify-between items-center mt-4 pt-3 border-t border-zinc-800 relative z-10">
               <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">{percentage}% COMPLETE</span>
-              <button onClick={() => onAddFundsClick(goal.id)} className="flex items-center gap-1 px-3 py-1.5 bg-zinc-100 hover:bg-white rounded text-[10px] font-bold text-zinc-950 border border-zinc-200 uppercase tracking-wide">
+              <button onClick={(e) => {e.stopPropagation(); onAddFundsClick(goal.id)}} className="flex items-center gap-1 px-3 py-1.5 bg-zinc-100 hover:bg-white rounded text-[10px] font-bold text-zinc-950 border border-zinc-200 uppercase tracking-wide">
                 <Plus size={10} /> Add Funds
               </button>
             </div>

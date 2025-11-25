@@ -143,7 +143,7 @@ export const DebtList: React.FC<DebtListProps> = ({ debts, onDelete, onToggleSta
                         </div>
                       )}
                       <button
-                        onClick={() => onToggleStatus(debt.id)}
+                        onClick={(e) =>{e.stopPropagation(); onToggleStatus(debt.id)}}
                         className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide px-3 py-1.5 rounded bg-zinc-100 text-zinc-950 hover:bg-white transition-all"
                       >
                         <Sword size={10} /> Pay
