@@ -290,7 +290,7 @@ const App: React.FC = () => {
 
       <main className="p-4 min-h-[calc(100vh-140px)] relative z-10">
         <Suspense fallback={<div className="text-sm text-zinc-500">Loading...</div>}>
-          {currentView === 'dashboard' && <Dashboard transactions={transactions} debts={debts} />}
+          {currentView === 'dashboard' && <Dashboard transactions={transactions} debts={debts} goals={goals} />}
         {currentView === 'list' && <ExpenseList expenses={transactions} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsExpenseModalOpen(true); }} />}
         {currentView === 'debts' && <DebtList debts={debts} onDelete={handleDeleteDebt} onToggleStatus={handleOpenPayDebt} onEdit={(d) => { setEditingDebt(d); setIsDebtModalOpen(true); }} />}
         {currentView === 'goals' && <GoalList goals={goals} onDelete={handleDeleteGoal} onAddFundsClick={handleOpenAddFunds} onEdit={(g) => { setEditingGoal(g); setIsGoalModalOpen(true); }} />}

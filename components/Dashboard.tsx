@@ -1,8 +1,8 @@
 
 import React, { useState, useMemo, Suspense, useEffect, useRef } from 'react';
-import { Transaction, Category, Debt } from '../types';
+import { Transaction, Category, Debt, Goal } from '../types';
 import { CategoryIcon } from './ui/CategoryIcon';
-import { Wallet, ShieldAlert, Landmark, TrendingUp, History, ArrowUpRight, ArrowDownRight, CalendarClock, AlertCircle } from 'lucide-react';
+import { Wallet, ShieldAlert, Landmark, TrendingUp, History, ArrowUpRight, ArrowDownRight, CalendarClock, AlertCircle, Target } from 'lucide-react';
 import { AIInsights } from './AIInsights';
 const CashFlowChart = React.lazy(() => import('./charts/CashFlowChart'));
 const CategoryChart = React.lazy(() => import('./charts/CategoryChart'));
@@ -10,11 +10,17 @@ const CategoryChart = React.lazy(() => import('./charts/CategoryChart'));
 interface DashboardProps {
   transactions: Transaction[];
   debts?: Debt[];
+  goals?: Goal[];
 }
 
 type TimeRange = 'today' | 'week' | 'month' | 'all';
 
 const formatJPY = (amount: number) => `¥${amount.toLocaleString()}`;
+const formatDate = (date?: string | null) => {
+  if (!date) return 'N/A';
+  const dt = new Date(date);
+  return isNaN(dt.getTime()) ? 'N/A' : dt.toLocaleDateString();
+};
 
 const CountUp: React.FC<{ value: number }> = ({ value }) => {
   const [display, setDisplay] = useState(0);
@@ -43,8 +49,10 @@ const CountUp: React.FC<{ value: number }> = ({ value }) => {
   return <>{formatJPY(Math.round(display))}</>;
 };
 
-export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [], goals = [] }) => {
   const [timeRange, setTimeRange] = useState<TimeRange>('month');
+  const [payoffStrategy, setPayoffStrategy] = useState<'avalanche' | 'snowball'>('avalanche');
+  const [extraDebtBudget, setExtraDebtBudget] = useState(0);
   // --- 1. Date Calculations Helpers ---
   const getStartOfWeek = (date: Date) => {
     const start = new Date(date);
@@ -164,12 +172,49 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
   // Sort for better grayscale gradient effect
   categoryData.sort((a, b) => b.value - a.value);
 
-  const recentTransactions = transactions.slice(0, 5);
+  // --- 7. Goals Snapshot ---
+  const goalSnapshot = useMemo(() => {
+    if (!goals.length) return null;
+
+    const totalSaved = goals.reduce((sum, g) => sum + g.currentAmount, 0);
+    const totalTarget = goals.reduce((sum, g) => sum + g.targetAmount, 0);
+
+    const progressList = goals
+      .map(g => ({
+        id: g.id,
+        name: g.name,
+        current: g.currentAmount,
+        target: g.targetAmount,
+        percent: g.targetAmount ? Math.min(100, Math.round((g.currentAmount / g.targetAmount) * 100)) : 0,
+      }))
+      .sort((a, b) => b.percent - a.percent);
+
+    return { totalSaved, totalTarget, topGoals: progressList.slice(0, 3) };
+  }, [goals]);
+
+  // --- 8. Debt Helpers ---
   const activeDebts = debts.filter(d => d.type === 'payable' && !d.isPaid);
   const totalDebt = activeDebts.reduce((sum, d) => sum + d.amount, 0);
+  const totalMinDue = activeDebts.reduce(
+    (sum, d) => sum + (d.minimumPayment ?? Math.max(d.amount * 0.02, 1000)),
+    0
+  );
 
-  // Debt payoff projection using minimums (Avalanche).
-  const debtProjection = useMemo(() => {
+  const nextDueDebt = useMemo(() => {
+    const withDue = activeDebts.filter(d => d.dueDate);
+    if (!withDue.length) return null;
+    return withDue.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())[0];
+  }, [activeDebts]);
+
+  const topDebts = useMemo(
+    () => [...activeDebts].sort((a, b) => b.amount - a.amount).slice(0, 3),
+    [activeDebts]
+  );
+
+  const computeDebtPlan = (
+    strategy: 'avalanche' | 'snowball',
+    extraBudget: number
+  ) => {
     const scheduled = activeDebts.map(d => ({
       ...d,
       balance: d.amount,
@@ -184,8 +229,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
       return { warning: 'Increase minimums to cover interest', date: null, months: null, budget: 0 };
     }
 
-    scheduled.sort((a, b) => b.rate - a.rate);
-    const monthlyBudget = scheduled.reduce((sum, d) => sum + d.minPay, 0);
+    const monthlyBudget = scheduled.reduce((sum, d) => sum + d.minPay, 0) + extraBudget;
     let months = 0;
     const maxMonths = 600;
 
@@ -209,9 +253,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
         }
       });
 
-      // Apply remaining budget to highest-rate balances
+      // Apply remaining budget following strategy
       if (budget > 0) {
-        for (const d of scheduled) {
+        const ordered = [...scheduled].sort((a, b) => {
+          if (strategy === 'avalanche') return (b.rate || 0) - (a.rate || 0);
+          return a.balance - b.balance;
+        });
+
+        for (const d of ordered) {
           if (d.balance > 1 && budget > 0) {
             const pay = Math.min(budget, d.balance);
             d.balance -= pay;
@@ -235,7 +284,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
       months,
       budget: monthlyBudget,
     };
-  }, [activeDebts]);
+  };
+
+  const baselinePlan = useMemo(
+    () => computeDebtPlan(payoffStrategy, 0),
+    [activeDebts, payoffStrategy]
+  );
+
+  const boostedPlan = useMemo(
+    () => computeDebtPlan(payoffStrategy, extraDebtBudget),
+    [activeDebts, payoffStrategy, extraDebtBudget]
+  );
+
+  const monthsFaster =
+    boostedPlan &&
+    baselinePlan &&
+    boostedPlan.months !== null &&
+    baselinePlan.months !== null &&
+    baselinePlan.months > boostedPlan.months
+      ? baselinePlan.months - boostedPlan.months
+      : 0;
+
+  const recentTransactions = transactions.slice(0, 5);
 
   return (
     <div className="space-y-6 pb-32">
@@ -292,43 +362,171 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
         </div>
       )}
 
-      {/* Debt Projection - Minimal */}
-      {totalDebt > 0 && (
-        <div className="bg-zinc-900/70 backdrop-blur-sm border border-zinc-800/80 p-5 rounded-xl flex justify-between items-center">
-             <div>
-               <h3 className="text-zinc-500 font-bold text-[10px] uppercase tracking-wider mb-1">Active Debt</h3>
-               <span className="text-2xl font-bold text-zinc-200 tabular-nums">{formatJPY(totalDebt)}</span>
-             </div>
-             <div className="bg-zinc-800 p-3 rounded-full text-zinc-400">
-               <ShieldAlert size={20} />
-             </div>
+      {/* Goals Snapshot */}
+      {goalSnapshot && (
+        <div className="bg-zinc-900/70 backdrop-blur-sm rounded-xl p-5 text-white border border-zinc-800/80 relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-4 opacity-10">
+            <Target size={48} className="text-white" />
+          </div>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-2">
+              <Target size={12} /> Goals Snapshot
+            </h3>
+            <span className="text-[10px] text-zinc-500 font-bold tabular-nums">
+              {goalSnapshot.totalTarget ? Math.min(100, Math.round((goalSnapshot.totalSaved / goalSnapshot.totalTarget) * 100)) : 0}%
+            </span>
+          </div>
+          <div className="flex gap-6 mb-4">
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Saved</p>
+              <p className="text-xl font-bold tabular-nums text-white">{formatJPY(goalSnapshot.totalSaved)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Targets</p>
+              <p className="text-xl font-bold tabular-nums text-zinc-300">{formatJPY(goalSnapshot.totalTarget)}</p>
+            </div>
+          </div>
+          <div className="space-y-3">
+            {goalSnapshot.topGoals.map(goal => (
+              <div key={goal.id}>
+                <div className="flex justify-between text-xs text-zinc-400 mb-1">
+                  <span className="font-semibold text-zinc-200 truncate">{goal.name}</span>
+                  <span className="tabular-nums">{goal.percent}%</span>
+                </div>
+                <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-white rounded-full transition-all"
+                    style={{ width: `${goal.percent}%` }}
+                  />
+                </div>
+                <p className="text-[10px] text-zinc-500 mt-1 tabular-nums">
+                  {formatJPY(goal.current)} / {formatJPY(goal.target)}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
-      {debtProjection && (
+      {/* Debt Projection - Minimal */}
+      {totalDebt > 0 && (
+        <div className="bg-zinc-900/70 backdrop-blur-sm border border-zinc-800/80 p-5 rounded-xl">
+          <div className="flex justify-between items-center mb-3">
+            <div>
+              <h3 className="text-zinc-500 font-bold text-[10px] uppercase tracking-wider mb-1">Active Debt</h3>
+              <span className="text-2xl font-bold text-zinc-200 tabular-nums">{formatJPY(totalDebt)}</span>
+            </div>
+            <div className="bg-zinc-800 p-3 rounded-full text-zinc-400">
+              <ShieldAlert size={20} />
+            </div>
+          </div>
+          <div className="flex gap-4 text-[11px] text-zinc-400 mb-3">
+            <span className="flex items-center gap-1">
+              <CalendarClock size={12} /> Next due: {nextDueDebt ? formatDate(nextDueDebt.dueDate) : 'N/A'}
+            </span>
+            <span className="flex items-center gap-1">
+              <Wallet size={12} /> Min this month: {formatJPY(Math.round(totalMinDue))}
+            </span>
+          </div>
+          <div className="space-y-2">
+            {topDebts.map(d => (
+              <div key={d.id} className="flex items-center justify-between text-sm text-zinc-200">
+                <div className="flex items-center gap-2 truncate">
+                  <span className="h-2 w-2 rounded-full bg-zinc-500" />
+                  <span className="font-semibold truncate">{d.person}</span>
+                </div>
+                <div className="text-right text-[11px] text-zinc-400">
+                  <div className="font-bold text-sm text-white tabular-nums">{formatJPY(d.amount)}</div>
+                  <div>Due {formatDate(d.dueDate)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {baselinePlan && (
         <div className="bg-zinc-900/70 backdrop-blur-sm border border-zinc-800/80 p-5 rounded-xl">
           <div className="flex items-center justify-between mb-2">
             <h3 className="font-bold text-zinc-500 text-[10px] uppercase tracking-wider flex items-center gap-2">
               <CalendarClock size={12} /> Debt-Free Projection
             </h3>
-            {debtProjection.budget !== null && (
-              <span className="text-[10px] text-zinc-500 font-bold tabular-nums">
-                Min Pay: {formatJPY(Math.round(debtProjection.budget ?? 0))}
-              </span>
-            )}
+            <div className="flex gap-1">
+              {(['avalanche', 'snowball'] as const).map(s => (
+                <button
+                  key={s}
+                  onClick={() => setPayoffStrategy(s)}
+                  className={`px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border transition ${
+                    payoffStrategy === s
+                      ? 'bg-white text-black border-white'
+                      : 'border-zinc-800 text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
           </div>
-          {debtProjection.warning ? (
+          {baselinePlan.warning ? (
             <div className="flex items-center gap-2 text-amber-400 text-sm">
-              <AlertCircle size={14} /> {debtProjection.warning}
+              <AlertCircle size={14} /> {baselinePlan.warning}
             </div>
           ) : (
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-wide mb-1">Debt Free By</p>
-                <p className="text-lg font-bold text-white">{debtProjection.date}</p>
-                <p className="text-[11px] text-zinc-500">~{debtProjection.months} months at minimums</p>
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-wide mb-1">Debt Free By</p>
+                  <p className="text-lg font-bold text-white">{baselinePlan.date}</p>
+                  <p className="text-[11px] text-zinc-500">~{baselinePlan.months} months at minimums</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-wide mb-1">Monthly Budget</p>
+                  <p className="text-lg font-bold text-white tabular-nums">{formatJPY(Math.round(baselinePlan.budget))}</p>
+                </div>
               </div>
-            </div>
+
+              <div className="mt-3 space-y-2 text-[11px] text-zinc-500">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span>Extra toward debt:</span>
+                  {[0, 5000, 10000].map(v => (
+                    <button
+                      key={v}
+                      onClick={() => setExtraDebtBudget(v)}
+                      className={`px-3 py-1 rounded-md border text-xs font-bold uppercase tracking-wide transition ${
+                        extraDebtBudget === v
+                          ? 'bg-white text-black border-white'
+                          : 'border-zinc-800 text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      {v === 0 ? 'Minimums' : `+${formatJPY(v)}`}
+                    </button>
+                  ))}
+                </div>
+                {extraDebtBudget > 0 && boostedPlan && !boostedPlan.warning && (
+                  <div className="bg-zinc-950/70 border border-zinc-800 rounded-lg p-3 text-zinc-200">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-wide mb-0.5">With Extra</p>
+                        <p className="text-sm font-bold text-white">{boostedPlan.date}</p>
+                        <p className="text-[11px] text-zinc-500">~{boostedPlan.months} months</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-wide mb-0.5">Budget</p>
+                        <p className="text-sm font-bold text-white tabular-nums">{formatJPY(Math.round(boostedPlan.budget))}</p>
+                        {monthsFaster > 0 && (
+                          <p className="text-[11px] text-emerald-400">Saves ~{monthsFaster} months</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {extraDebtBudget > 0 && boostedPlan?.warning && (
+                  <div className="flex items-center gap-2 text-amber-400 text-sm">
+                    <AlertCircle size={14} /> {boostedPlan.warning}
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -385,10 +583,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [] }
         </div>
       </div>
       
-      <AIInsights 
+      {/* <AIInsights 
         debts={debts} 
         monthlyFreeCashFlow={currentMonthCashFlow} 
-      />
+      /> */}
     </div>
   );
 };
