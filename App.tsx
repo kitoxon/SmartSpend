@@ -120,7 +120,11 @@ const App: React.FC = () => {
 
      const debt = debts.find(d => d.id === selectedDebtId);
      if (debt) {
-        const newBalance = Math.max(0, debt.amount - amount);
+        const principalPayment = Math.max(0, amount);
+        const monthlyRate = (debt.interestRate ?? 0) / 100 / 12;
+        const interestDue = monthlyRate > 0 ? Math.round(debt.amount * monthlyRate) : 0;
+        const totalCharge = principalPayment + interestDue;
+        const newBalance = Math.max(0, debt.amount - principalPayment);
         const isPaidOff = newBalance === 0;
         const currentDue = new Date(debt.dueDate || new Date().toISOString());
         const nextDue = new Date(currentDue);
@@ -133,10 +137,10 @@ const App: React.FC = () => {
         if (debt.type === 'payable') {
           const newTx: Transaction = {
              id: crypto.randomUUID(),
-             amount: amount,
+             amount: totalCharge,
              category: Category.Debt,
              date: new Date().toISOString(),
-             description: `Debt Payment: ${debt.person}`,
+             description: `Debt Payment: ${debt.person} (principal ¥${principalPayment.toLocaleString()} + interest ¥${interestDue.toLocaleString()})`,
              type: 'expense'
           };
           setTransactions(prev => [newTx, ...prev]);
