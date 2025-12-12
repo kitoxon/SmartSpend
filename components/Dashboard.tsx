@@ -486,19 +486,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [], 
               </div>
 
               <div className="mt-3 space-y-2 text-[11px] text-zinc-500">
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1 flex-nowrap">
                   <span>Extra toward debt:</span>
                   {[0, 5000, 10000].map(v => (
                     <button
                       key={v}
                       onClick={() => setExtraDebtBudget(v)}
-                      className={`px-3 py-1 rounded-md border text-xs font-bold uppercase tracking-wide transition ${
+                      className={`px-2.5 py-1 rounded-md border text-[10px] font-bold uppercase tracking-wide transition ${
                         extraDebtBudget === v
                           ? 'bg-white text-black border-white'
                           : 'border-zinc-800 text-zinc-400 hover:text-white'
                       }`}
                     >
-                      {v === 0 ? 'Minimums' : `+${formatJPY(v)}`}
+                      {v === 0 ? 'Base' : `+${v / 1000}k`}
                     </button>
                   ))}
                 </div>
