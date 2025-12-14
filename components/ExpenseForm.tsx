@@ -9,16 +9,20 @@ interface TransactionFormProps {
   onSave: (transaction: Omit<Transaction, 'id'>, existingId?: string) => void;
   onCancel: () => void;
   transaction?: Transaction;
+  prefill?: Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>>;
 }
 
-export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, transaction }) => {
+export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, transaction, prefill }) => {
   const todayLocal = new Date().toLocaleDateString('en-CA');
 
-  const [type, setType] = useState<TransactionType>(transaction?.type ?? 'expense');
-  const [amount, setAmount] = useState(transaction ? transaction.amount.toString() : '');
-  const [description, setDescription] = useState(transaction?.description ?? '');
-  const [category, setCategory] = useState<Category>(transaction?.category ?? Category.Other);
-  const [date, setDate] = useState(transaction ? transaction.date.split('T')[0] : todayLocal);
+  const prefillDate =
+    prefill?.date ? (prefill.date.includes('T') ? prefill.date.split('T')[0] : prefill.date) : todayLocal;
+
+  const [type, setType] = useState<TransactionType>(transaction?.type ?? prefill?.type ?? 'expense');
+  const [amount, setAmount] = useState(transaction ? transaction.amount.toString() : prefill?.amount?.toString() ?? '');
+  const [description, setDescription] = useState(transaction?.description ?? prefill?.description ?? '');
+  const [category, setCategory] = useState<Category>(transaction?.category ?? prefill?.category ?? Category.Other);
+  const [date, setDate] = useState(transaction ? transaction.date.split('T')[0] : prefillDate);
   const [isRecurring, setIsRecurring] = useState(false);
   const [frequency, setFrequency] = useState<'weekly' | 'monthly'>('monthly');
 
@@ -31,6 +35,16 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
       setDate(transaction.date.split('T')[0]);
     }
   }, [transaction]);
+
+  useEffect(() => {
+    if (transaction) return;
+    if (!prefill) return;
+    if (prefill.type) setType(prefill.type);
+    if (prefill.amount !== undefined) setAmount(prefill.amount.toString());
+    if (prefill.description) setDescription(prefill.description);
+    if (prefill.category) setCategory(prefill.category);
+    if (prefill.date) setDate(prefillDate);
+  }, [prefill, prefillDate, transaction]);
 
   useEffect(() => {
     if (transaction) return;

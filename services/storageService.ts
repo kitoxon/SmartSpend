@@ -11,7 +11,7 @@ const RECURRING_KEY = 'smartspend_recurring_v1';
 /*
   SUPABASE SCHEMA INSTRUCTIONS:
   If using Supabase, create these tables:
-  transactions, debts, goals, recurring_transactions
+  transactions, debts, goals, recurring_transactions, habit_patterns, habit_reminder_state
 */
 
 // --- Transactions ---

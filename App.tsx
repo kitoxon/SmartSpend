@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { ViewState, Transaction, Debt, Goal, Category } from './types';
 import { 
   getTransactions, saveTransaction, deleteTransaction, 
@@ -7,6 +7,8 @@ import {
   getGoals, saveGoal, deleteGoal,
   processRecurringTransactions
 } from './services/storageService';
+import { buildHabitPatterns, findDueHabitReminder, HabitReminderCandidate, HabitReminderState } from './services/habitService';
+import { getHabitPatterns, getHabitReminderState, saveHabitPatterns, saveHabitReminderState } from './services/habitStorageService';
 import { MOCK_DEBTS_IF_EMPTY, MOCK_GOALS_IF_EMPTY } from './constants';
 import { ExpenseForm } from './components/ExpenseForm';
 import { DebtForm } from './components/DebtForm';
@@ -25,6 +27,12 @@ const App: React.FC = () => {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
   const [isLoading, setIsLoading] = useState(true);
+
+  const [habitReminder, setHabitReminder] = useState<HabitReminderCandidate | null>(null);
+  const [habitStateById, setHabitStateById] = useState<Record<string, HabitReminderState>>({});
+  const [habitPatterns, setHabitPatternsState] = useState<ReturnType<typeof buildHabitPatterns>>([]);
+  const [expensePrefill, setExpensePrefill] = useState<Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>> | null>(null);
+  const habitsInitialized = useRef(false);
   
   // Modal states
   const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false);
@@ -41,6 +49,14 @@ const App: React.FC = () => {
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [editingDebt, setEditingDebt] = useState<Debt | null>(null);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
+
+  const todayLocal = () => new Date().toLocaleDateString('en-CA');
+  const addDaysLocal = (isoDate: string, days: number) => {
+    const dt = new Date(isoDate);
+    if (isNaN(dt.getTime())) return isoDate;
+    dt.setDate(dt.getDate() + days);
+    return dt.toLocaleDateString('en-CA');
+  };
 
   useEffect(() => {
     const loadData = async () => {
@@ -66,6 +82,97 @@ const App: React.FC = () => {
     loadData();
   }, []);
 
+  // Habits bootstrap (Supabase-first, local fallback)
+  useEffect(() => {
+    if (isLoading || habitsInitialized.current) return;
+    const init = async () => {
+      const [storedPatterns, storedState] = await Promise.all([getHabitPatterns(), getHabitReminderState()]);
+
+      const computed = buildHabitPatterns(transactions);
+      const merged = computed.map((p) => {
+        const existing = storedPatterns.find((sp) => sp.habitId === p.habitId);
+        return existing ? { ...p, active: existing.active } : p;
+      });
+
+      setHabitPatternsState(merged);
+      setHabitStateById(storedState);
+
+      // Best-effort persist of computed patterns (keeps Supabase in sync).
+      await saveHabitPatterns(merged);
+      habitsInitialized.current = true;
+    };
+    void init();
+  }, [isLoading, transactions]);
+
+  // Recompute patterns when transactions change (preserve active toggles).
+  useEffect(() => {
+    if (!habitsInitialized.current) return;
+    const computed = buildHabitPatterns(transactions);
+    setHabitPatternsState((prev) => {
+      const merged = computed.map((p) => {
+        const existing = prev.find((sp) => sp.habitId === p.habitId);
+        return existing ? { ...p, active: existing.active } : p;
+      });
+      void saveHabitPatterns(merged);
+      return merged;
+    });
+  }, [transactions]);
+
+  // In-app reminders (reliable) – run on open / foreground.
+  useEffect(() => {
+    if (isLoading) return;
+
+    const maybeShow = async () => {
+      if (habitReminder) return;
+      if (!habitPatterns.length) return;
+      if (isCommandMenuOpen || isExpenseModalOpen || isDebtModalOpen || isGoalModalOpen || isAddFundsModalOpen || isPayDebtModalOpen) return;
+
+      const today = todayLocal();
+      const globalKey = 'smartspend_habit_global_state_v1';
+      const global = (() => {
+        try {
+          return JSON.parse(localStorage.getItem(globalKey) || 'null') as { date: string; count: number } | null;
+        } catch {
+          return null;
+        }
+      })();
+      if (global?.date === today && global.count >= 2) return;
+
+      const candidate = findDueHabitReminder(habitPatterns, transactions, habitStateById);
+      if (!candidate) return;
+
+      const next = { date: today, count: (global?.date === today ? global.count : 0) + 1 };
+      localStorage.setItem(globalKey, JSON.stringify(next));
+      setHabitReminder(candidate);
+    };
+
+    const onVis = () => {
+      if (document.visibilityState === 'visible') void maybeShow();
+    };
+    const onFocus = () => void maybeShow();
+
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onFocus);
+    void maybeShow();
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [
+    habitPatterns,
+    habitReminder,
+    habitStateById,
+    isAddFundsModalOpen,
+    isCommandMenuOpen,
+    isDebtModalOpen,
+    isExpenseModalOpen,
+    isGoalModalOpen,
+    isLoading,
+    isPayDebtModalOpen,
+    transactions,
+  ]);
+
   const handleSaveTransaction = async (newTxData: Omit<Transaction, 'id'>, existingId?: string) => {
     if (existingId) {
       const updatedTx: Transaction = { ...newTxData, id: existingId, created_at: editingTransaction?.created_at ?? new Date().toISOString() };
@@ -77,6 +184,7 @@ const App: React.FC = () => {
       await saveTransaction(newTx);
     }
     setEditingTransaction(null);
+    setExpensePrefill(null);
     setIsExpenseModalOpen(false);
   };
 
@@ -232,6 +340,7 @@ const App: React.FC = () => {
       setIsGoalModalOpen(true);
     } else {
       setEditingTransaction(null);
+      setExpensePrefill(null);
       setIsExpenseModalOpen(true);
     }
   };
@@ -356,7 +465,12 @@ const App: React.FC = () => {
       </Modal>
 
       <Modal isOpen={isExpenseModalOpen} onClose={() => { setIsExpenseModalOpen(false); setEditingTransaction(null); }} title={editingTransaction ? "Edit Transaction" : "Log Transaction"}>
-        <ExpenseForm transaction={editingTransaction ?? undefined} onSave={handleSaveTransaction} onCancel={() => { setIsExpenseModalOpen(false); setEditingTransaction(null); }} />
+        <ExpenseForm
+          transaction={editingTransaction ?? undefined}
+          prefill={editingTransaction ? undefined : expensePrefill ?? undefined}
+          onSave={handleSaveTransaction}
+          onCancel={() => { setIsExpenseModalOpen(false); setEditingTransaction(null); setExpensePrefill(null); }}
+        />
       </Modal>
       <Modal isOpen={isDebtModalOpen} onClose={() => { setIsDebtModalOpen(false); setEditingDebt(null); }} title={editingDebt ? "Edit Debt" : "Add Debt"}>
         <DebtForm debt={editingDebt ?? undefined} onSave={handleSaveDebt} onCancel={() => { setIsDebtModalOpen(false); setEditingDebt(null); }} />
@@ -429,6 +543,106 @@ const App: React.FC = () => {
         .animate-fade-in { animation: fadeIn 0.2s ease-in; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
       `}</style>
+
+      <Modal
+        isOpen={!!habitReminder}
+        onClose={() => {
+          if (!habitReminder) return;
+          const today = todayLocal();
+          const s = habitStateById[habitReminder.habitId] ?? {
+            habitId: habitReminder.habitId,
+            lastRemindedDate: null,
+            snoozedUntil: null,
+            dismissCountRecent: 0,
+          };
+          const next = { ...habitStateById, [habitReminder.habitId]: { ...s, lastRemindedDate: today } };
+          setHabitStateById(next);
+          void saveHabitReminderState(next);
+          setHabitReminder(null);
+        }}
+        title="Reminder"
+      >
+        {habitReminder && (
+          <div className="space-y-4">
+            <p className="text-sm text-zinc-300">{habitReminder.message}</p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const today = todayLocal();
+                  const s = habitStateById[habitReminder.habitId] ?? {
+                    habitId: habitReminder.habitId,
+                    lastRemindedDate: null,
+                    snoozedUntil: null,
+                    dismissCountRecent: 0,
+                  };
+                  const next = { ...habitStateById, [habitReminder.habitId]: { ...s, lastRemindedDate: today, dismissCountRecent: 0 } };
+                  setHabitStateById(next);
+                  void saveHabitReminderState(next);
+
+                  setIsExpenseModalOpen(true);
+                  setEditingTransaction(null);
+                  setExpensePrefill({
+                    type: 'expense',
+                    category: habitReminder.category,
+                    amount: habitReminder.amount,
+                    description: habitReminder.description,
+                    date: today,
+                  });
+                  setHabitReminder(null);
+                }}
+                className="flex-1 h-11 bg-white hover:bg-zinc-200 text-black font-bold text-xs uppercase tracking-wide rounded-lg transition-colors"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const today = todayLocal();
+                  const s = habitStateById[habitReminder.habitId] ?? {
+                    habitId: habitReminder.habitId,
+                    lastRemindedDate: null,
+                    snoozedUntil: null,
+                    dismissCountRecent: 0,
+                  };
+                  const newCount = s.dismissCountRecent + 1;
+                  const snoozedUntil = newCount >= 2 ? addDaysLocal(today, 14) : s.snoozedUntil;
+                  const dismissCountRecent = newCount >= 2 ? 0 : newCount;
+                  const next = {
+                    ...habitStateById,
+                    [habitReminder.habitId]: {
+                      ...s,
+                      lastRemindedDate: today,
+                      snoozedUntil,
+                      dismissCountRecent,
+                    },
+                  };
+                  setHabitStateById(next);
+                  void saveHabitReminderState(next);
+                  setHabitReminder(null);
+                }}
+                className="flex-1 h-11 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 font-bold text-xs uppercase tracking-wide rounded-lg transition-colors"
+              >
+                Not today
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setHabitPatternsState((prev) => {
+                  const updated = prev.map((p) => (p.habitId === habitReminder.habitId ? { ...p, active: false } : p));
+                  void saveHabitPatterns(updated);
+                  return updated;
+                });
+                setHabitReminder(null);
+              }}
+              className="w-full h-11 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 text-zinc-500 font-bold text-xs uppercase tracking-wide rounded-lg transition-colors"
+            >
+              Stop reminding
+            </button>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };
