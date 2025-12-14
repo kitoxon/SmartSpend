@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Debt } from '../types';
 import { CheckCircle, Trash2, Calendar, CreditCard, User, Landmark, Banknote, Percent, Shield, Sword } from 'lucide-react';
+import { simulateDebtPayoff } from '../utils/debtPayoff';
 
 interface DebtListProps {
   debts: Debt[];
@@ -21,6 +22,29 @@ export const DebtList: React.FC<DebtListProps> = ({ debts, onDelete, onToggleSta
     .filter(d => !d.isPaid)
     .reduce((sum, d) => sum + d.amount, 0);
 
+  const activeDebts = useMemo(
+    () => debts.filter((d) => d.type === 'payable' && !d.isPaid && d.amount > 0),
+    [debts]
+  );
+
+  const projectionStartDate = useMemo(() => {
+    const now = new Date();
+    const validDueDates = activeDebts
+      .map((d) => new Date(d.dueDate))
+      .filter((dt) => !isNaN(dt.getTime()))
+      .sort((a, b) => a.getTime() - b.getTime());
+    const earliest = validDueDates[0];
+    if (earliest && earliest.getTime() > now.getTime()) return earliest;
+    return now;
+  }, [activeDebts]);
+
+  const payoffPlan = useMemo(() => {
+    return simulateDebtPayoff(activeDebts, {
+      strategy: 'dueDate',
+      startDate: projectionStartDate,
+    });
+  }, [activeDebts, projectionStartDate]);
+
   const getCategoryIcon = (cat: string) => {
     switch(cat) {
         case 'Credit Card': return <CreditCard size={10} />;
@@ -34,30 +58,15 @@ export const DebtList: React.FC<DebtListProps> = ({ debts, onDelete, onToggleSta
   const formatJPY = (amount: number) => `¥${amount.toLocaleString()}`;
 
   const getPayoffProjection = (debt: Debt) => {
-    const minPay = debt.minimumPayment ?? 0;
-    if (minPay <= 0 || debt.amount <= 0) return null;
-
-    const monthlyRate = (debt.interestRate ?? 0) / 100 / 12;
-    let balance = debt.amount;
-    let months = 0;
-    const maxMonths = 600;
-
-    // If payment does not cover interest, warn about negative amortization.
-    if (monthlyRate > 0 && minPay <= balance * monthlyRate) {
-      return { text: 'Increase payment (interest > min)' };
+    if (debt.amount <= 0) return null;
+    if (payoffPlan.warning) return { text: payoffPlan.warning };
+    const entry = payoffPlan.perDebt[debt.id];
+    if (!entry) {
+      const minPay = debt.minimumPayment ?? 0;
+      if (minPay <= 0) return { text: 'Set monthly payment' };
+      return null;
     }
-
-    while (balance > 1 && months < maxMonths) {
-      balance += balance * monthlyRate;
-      balance -= minPay;
-      months++;
-    }
-
-    if (months >= maxMonths) return { text: 'Increase payment (too long)' };
-
-    const payoffDate = new Date();
-    payoffDate.setMonth(payoffDate.getMonth() + months);
-    return { text: `Paid off by ${payoffDate.toLocaleDateString()}` };
+    return { text: `Paid off by ${entry.payoffDate.toLocaleDateString('default', { month: 'long', year: 'numeric' })}` };
   };
 
   return (
@@ -66,6 +75,11 @@ export const DebtList: React.FC<DebtListProps> = ({ debts, onDelete, onToggleSta
       <div className="bg-zinc-800/50 rounded-lg p-5 text-zinc-100 border border-zinc-800 relative overflow-hidden">
         <h3 className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mb-1">Total Liability</h3>
         <div className="text-3xl font-bold text-white tracking-tight">{formatJPY(totalDebt)}</div>
+        {activeDebts.length > 0 && !payoffPlan.warning && payoffPlan.payoffDateLabel && (
+          <div className="mt-2 text-[11px] text-zinc-400 flex items-center gap-1.5">
+            <Calendar size={12} /> Debt-free by {payoffPlan.payoffDateLabel}
+          </div>
+        )}
       </div>
 
       {/* List */}

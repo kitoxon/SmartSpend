@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Debt, DebtForecast } from '../types';
 import { ArrowRight, Wallet, TrendingUp, Landmark, Calculator, CheckCircle2, CalendarClock, AlertCircle } from 'lucide-react';
+import { simulateDebtPayoff } from '../utils/debtPayoff';
 
 interface AIInsightsProps {
   debts: Debt[];
@@ -42,7 +43,6 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ debts, monthlyFreeCashFl
       .filter((d) => d.type === 'payable' && !d.isPaid)
       .map((d) => ({
         ...d,
-        currentBalance: d.amount,
         rate: d.interestRate ?? 15.0,
         minPay: d.minimumPayment ?? Math.max(d.amount * 0.02, 1000),
       }));
@@ -63,67 +63,33 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ debts, monthlyFreeCashFl
       return;
     }
 
-    if (strategy === 'avalanche') {
-      activeDebts.sort((a, b) => b.rate - a.rate);
-    } else {
-      activeDebts.sort((a, b) => a.currentBalance - b.currentBalance);
-    }
+    const extraPrincipalBudget = budget - totalMin;
+    const payoff = simulateDebtPayoff(debts, {
+      strategy,
+      extraPrincipalBudget,
+      startDate: new Date(),
+      minPaymentFallback: (d) => Math.max(d.amount * 0.02, 1000),
+    });
 
-    let months = 0;
-    let totalInterestAccrued = 0;
-    const maxMonths = 600;
-
-    while (months < maxMonths) {
-      if (activeDebts.every((d) => d.currentBalance <= 1)) break;
-
-      months++;
-      let monthlyBudgetAvailable = budget;
-
-      activeDebts.forEach((d) => {
-        if (d.currentBalance > 1) {
-          const interest = d.currentBalance * (d.rate / 100 / 12);
-          d.currentBalance += interest;
-          totalInterestAccrued += interest;
-        }
-      });
-
-      activeDebts.forEach((d) => {
-        if (d.currentBalance > 1) {
-          const pay = Math.min(d.minPay, d.currentBalance);
-          d.currentBalance -= pay;
-          monthlyBudgetAvailable -= pay;
-        }
-      });
-
-      if (monthlyBudgetAvailable > 0) {
-        for (const d of activeDebts) {
-          if (d.currentBalance > 1) {
-            const pay = Math.min(monthlyBudgetAvailable, d.currentBalance);
-            d.currentBalance -= pay;
-            monthlyBudgetAvailable -= pay;
-            if (monthlyBudgetAvailable <= 0) break;
-          }
-        }
-      }
-    }
-
-    const futureDate = new Date();
-    futureDate.setMonth(futureDate.getMonth() + months);
+    const orderedForExtra = [...activeDebts].sort((a, b) => {
+      if (strategy === 'avalanche') return b.rate - a.rate;
+      return a.amount - b.amount;
+    });
 
     localStorage.setItem('smartspend_payoff_budget', customBudget);
     localStorage.setItem('smartspend_payoff_strategy', strategy);
 
     setDebtForecast({
       estimatedDebtFreeDate:
-        months >= maxMonths ? 'Over 50 Years' : futureDate.toLocaleDateString('default', { month: 'long', year: 'numeric' }),
+        payoff.warning ? 'Over 50 Years' : (payoff.payoffDateLabel ?? 'Debt Free'),
       monthlyPaymentRecommendation: budget,
       strategy: strategy === 'avalanche' ? 'Avalanche (Highest Interest First)' : 'Snowball (Smallest Balance First)',
-      interestWarning: `Total Interest Cost: ¥${Math.round(totalInterestAccrued).toLocaleString()}`,
+      interestWarning: `Total Interest Cost: ¥${Math.round(payoff.totalInterestPaid).toLocaleString()}`,
       actionPlan: [
         strategy === 'avalanche'
-          ? `Focus extra payments on: ${activeDebts[0].person} (${activeDebts[0].rate}%)`
-          : `Focus first on smallest balance: ${activeDebts[0].person} (${formatCurrency(activeDebts[0].currentBalance)})`,
-        `Time to debt free: ${months} months`,
+          ? `Focus extra payments on: ${orderedForExtra[0].person} (${orderedForExtra[0].rate}%)`
+          : `Focus first on smallest balance: ${orderedForExtra[0].person} (${formatCurrency(orderedForExtra[0].amount)})`,
+        `Time to debt free: ${payoff.months ?? 'N/A'} months`,
         `Keep monthly budget steady at ¥${budget.toLocaleString()}`,
       ],
     });

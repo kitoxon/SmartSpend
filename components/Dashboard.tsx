@@ -4,6 +4,7 @@ import { Transaction, Category, Debt, Goal } from '../types';
 import { CategoryIcon } from './ui/CategoryIcon';
 import { Wallet, ShieldAlert, Landmark, TrendingUp, History, ArrowUpRight, ArrowDownRight, CalendarClock, AlertCircle, Target } from 'lucide-react';
 import { AIInsights } from './AIInsights';
+import { simulateDebtPayoff } from '../utils/debtPayoff';
 const CashFlowChart = React.lazy(() => import('./charts/CashFlowChart'));
 const CategoryChart = React.lazy(() => import('./charts/CategoryChart'));
 
@@ -215,74 +216,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [], 
     strategy: 'avalanche' | 'snowball',
     extraBudget: number
   ) => {
-    const scheduled = activeDebts.map(d => ({
-      ...d,
-      balance: d.amount,
-      rate: d.interestRate ?? 15,
-      minPay: d.minimumPayment ?? Math.max(d.amount * 0.02, 1000),
-    }));
-    if (scheduled.length === 0) return null;
+    if (activeDebts.length === 0) return null;
 
-    // If minimums don’t cover interest for any debt, show warning.
-    const insufficient = scheduled.find(d => d.minPay <= d.balance * (d.rate / 100 / 12));
-    if (insufficient) {
-      return { warning: 'Increase minimums to cover interest', date: null, months: null, budget: 0 };
-    }
-
-    const monthlyBudget = scheduled.reduce((sum, d) => sum + d.minPay, 0) + extraBudget;
-    let months = 0;
-    const maxMonths = 600;
-
-    while (months < maxMonths && scheduled.some(d => d.balance > 1)) {
-      months++;
-      let budget = monthlyBudget;
-
-      // Accrue interest
-      scheduled.forEach(d => {
-        if (d.balance > 1) {
-          d.balance += d.balance * (d.rate / 100 / 12);
-        }
-      });
-
-      // Pay minimums (limited by available budget)
-      scheduled.forEach(d => {
-        if (d.balance > 1) {
-          const pay = Math.min(d.minPay, d.balance, budget);
-          d.balance -= pay;
-          budget -= pay;
-        }
-      });
-
-      // Apply remaining budget following strategy
-      if (budget > 0) {
-        const ordered = [...scheduled].sort((a, b) => {
-          if (strategy === 'avalanche') return (b.rate || 0) - (a.rate || 0);
-          return a.balance - b.balance;
-        });
-
-        for (const d of ordered) {
-          if (d.balance > 1 && budget > 0) {
-            const pay = Math.min(budget, d.balance);
-            d.balance -= pay;
-            budget -= pay;
-          }
-          if (budget <= 0) break;
-        }
-      }
-    }
-
-    if (months >= maxMonths) {
-      return { warning: 'Payment plan too long; increase payments', date: null, months: null, budget: monthlyBudget };
-    }
-
-    const payoffDate = new Date();
-    payoffDate.setMonth(payoffDate.getMonth() + months);
+    const plan = simulateDebtPayoff(activeDebts, {
+      strategy,
+      extraPrincipalBudget: extraBudget,
+      startDate: new Date(),
+      minPaymentFallback: (d) => Math.max(d.amount * 0.02, 1000),
+    });
 
     return {
-      warning: null,
-      date: payoffDate.toLocaleDateString('default', { month: 'long', year: 'numeric' }),
-      months,
-      budget: monthlyBudget,
+      warning: plan.warning,
+      date: plan.payoffDateLabel,
+      months: plan.months,
+      budget: plan.monthlyPrincipalBudget,
+      interest: plan.totalInterestPaid,
     };
   };
 
@@ -478,6 +426,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [], 
                   <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-wide mb-1">Debt Free By</p>
                   <p className="text-lg font-bold text-white">{baselinePlan.date}</p>
                   <p className="text-[11px] text-zinc-500">~{baselinePlan.months} months at minimums</p>
+                  <p className="text-[11px] text-zinc-500">Est. interest: {formatJPY(Math.round(baselinePlan.interest ?? 0))}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-wide mb-1">Monthly Budget</p>
@@ -509,6 +458,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [], 
                         <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-wide mb-0.5">With Extra</p>
                         <p className="text-sm font-bold text-white">{boostedPlan.date}</p>
                         <p className="text-[11px] text-zinc-500">~{boostedPlan.months} months</p>
+                        <p className="text-[11px] text-zinc-500">Est. interest: {formatJPY(Math.round(boostedPlan.interest ?? 0))}</p>
                       </div>
                       <div className="text-right">
                         <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-wide mb-0.5">Budget</p>
