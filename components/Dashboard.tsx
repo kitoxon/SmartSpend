@@ -200,6 +200,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [], 
     (sum, d) => sum + (d.minimumPayment ?? Math.max(d.amount * 0.02, 1000)),
     0
   );
+  const latestDueDate = useMemo(() => {
+    let latest: Date | null = null;
+    for (const debt of activeDebts) {
+      if (!debt.dueDate) continue;
+      const due = new Date(debt.dueDate);
+      if (Number.isNaN(due.getTime())) continue;
+      if (!latest || due > latest) latest = due;
+    }
+    return latest;
+  }, [activeDebts]);
 
   const nextDueDebt = useMemo(() => {
     const withDue = activeDebts.filter(d => d.dueDate);
@@ -221,7 +231,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [], 
     const plan = simulateDebtPayoff(activeDebts, {
       strategy,
       extraPrincipalBudget: extraBudget,
-      startDate: new Date(),
+      startDate: latestDueDate ?? new Date(),
       minPaymentFallback: (d) => Math.max(d.amount * 0.02, 1000),
     });
 
@@ -437,7 +447,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [], 
               <div className="mt-3 space-y-2 text-[11px] text-zinc-500">
                 <div className="flex items-center gap-1 flex-nowrap">
                   <span>Extra toward debt:</span>
-                  {[0, 5000, 10000].map(v => (
+                  {[0, 5000, 10000, 20000, 30000].map(v => (
                     <button
                       key={v}
                       onClick={() => setExtraDebtBudget(v)}
