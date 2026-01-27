@@ -95,6 +95,10 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
     () => displayTransactions.reduce((sum, t) => sum + t.amount, 0),
     [displayTransactions]
   );
+  const totalFilteredAmount = useMemo(
+    () => processedTransactions.reduce((sum, t) => sum + t.amount, 0),
+    [processedTransactions]
+  );
 
   const groupedTransactions = useMemo(() => {
     if (sortBy.includes('amount')) return null;
@@ -206,6 +210,15 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
           </button>
         </div>
 
+        <div className="flex items-center justify-between text-[10px] text-zinc-500 px-1 mb-2">
+          <span className="font-bold">Showing {displayTransactions.length} of {totalFilteredCount}</span>
+          <div className="flex items-center gap-3">
+            <span className="text-zinc-400 font-bold tabular-nums">Total (range) ¥{totalFilteredAmount.toLocaleString()}</span>
+            <span className="text-zinc-600">Page ¥{displayTotalAmount.toLocaleString()}</span>
+            {selectedCategory !== 'All' && <span className="text-zinc-500">{selectedCategory}</span>}
+          </div>
+        </div>
+
         {showFilters && (
            <div className="flex flex-col gap-4 p-4 bg-zinc-900 rounded-xl border border-zinc-800 shadow-2xl animate-fade-in mb-4">
               {/* Type Toggle */}
@@ -299,13 +312,6 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
 
       {/* Transaction List */}
       <div className="min-h-[300px]">
-        <div className="flex items-center justify-between text-[10px] text-zinc-500 px-1 mb-2">
-          <span className="font-bold">Showing {displayTransactions.length} of {totalFilteredCount}</span>
-          <div className="flex items-center gap-3">
-            <span className="text-zinc-400 font-bold tabular-nums">Total ¥{displayTotalAmount.toLocaleString()}</span>
-            {selectedCategory !== 'All' && <span className="text-zinc-500">{selectedCategory}</span>}
-          </div>
-        </div>
         {processedTransactions.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-zinc-700">
             <div className="w-12 h-12 rounded-full bg-zinc-900 flex items-center justify-center mb-3 border border-zinc-800">
