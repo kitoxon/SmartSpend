@@ -58,6 +58,20 @@ const App: React.FC = () => {
     return dt.toLocaleDateString('en-CA');
   };
 
+  const openTransactionModal = (
+    prefill: Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>> | null = null
+  ) => {
+    setEditingTransaction(null);
+    setExpensePrefill(prefill);
+    setIsExpenseModalOpen(true);
+  };
+
+  const closeTransactionModal = () => {
+    setIsExpenseModalOpen(false);
+    setEditingTransaction(null);
+    setExpensePrefill(null);
+  };
+
   useEffect(() => {
     const loadData = async () => {
       await processRecurringTransactions();
@@ -339,9 +353,7 @@ const App: React.FC = () => {
     } else if (currentView === 'goals') {
       setIsGoalModalOpen(true);
     } else {
-      setEditingTransaction(null);
-      setExpensePrefill(null);
-      setIsExpenseModalOpen(true);
+      openTransactionModal();
     }
   };
 
@@ -404,7 +416,7 @@ const App: React.FC = () => {
       <main className="p-4 min-h-[calc(100vh-140px)] relative z-10">
         <Suspense fallback={<div className="text-sm text-zinc-500">Loading...</div>}>
           {currentView === 'dashboard' && <Dashboard transactions={transactions} debts={debts} goals={goals} />}
-        {currentView === 'list' && <ExpenseList expenses={transactions} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsExpenseModalOpen(true); }} />}
+        {currentView === 'list' && <ExpenseList expenses={transactions} onDelete={handleDeleteTransaction} onEdit={(tx) => { setExpensePrefill(null); setEditingTransaction(tx); setIsExpenseModalOpen(true); }} />}
         {currentView === 'debts' && <DebtList debts={debts} onDelete={handleDeleteDebt} onToggleStatus={handleOpenPayDebt} onEdit={(d) => { setEditingDebt(d); setIsDebtModalOpen(true); }} />}
         {currentView === 'goals' && <GoalList goals={goals} onDelete={handleDeleteGoal} onAddFundsClick={handleOpenAddFunds} onEdit={(g) => { setEditingGoal(g); setIsGoalModalOpen(true); }} />}
         </Suspense>
@@ -445,11 +457,11 @@ const App: React.FC = () => {
       {/* Command Menu Modal */}
       <Modal isOpen={isCommandMenuOpen} onClose={() => setIsCommandMenuOpen(false)} title="Quick Actions">
         <div className="grid grid-cols-2 gap-3 pt-2">
-           <button onClick={() => { setIsCommandMenuOpen(false); setEditingTransaction(null); setIsExpenseModalOpen(true); }} className="flex flex-col items-center justify-center p-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-all active:scale-95 group">
+           <button onClick={() => { setIsCommandMenuOpen(false); openTransactionModal({ type: 'expense' }); }} className="flex flex-col items-center justify-center p-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-all active:scale-95 group">
               <div className="bg-zinc-100 p-2.5 rounded-full text-black mb-2 group-hover:bg-white transition-colors"><TrendingDown size={18} /></div>
               <span className="font-bold text-xs text-zinc-200 uppercase tracking-wide">Expense</span>
            </button>
-           <button onClick={() => { setIsCommandMenuOpen(false); setEditingTransaction(null); setIsExpenseModalOpen(true); }} className="flex flex-col items-center justify-center p-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-all active:scale-95 group">
+           <button onClick={() => { setIsCommandMenuOpen(false); openTransactionModal({ type: 'income' }); }} className="flex flex-col items-center justify-center p-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-all active:scale-95 group">
               <div className="bg-zinc-100 p-2.5 rounded-full text-black mb-2 group-hover:bg-white transition-colors"><TrendingUp size={18} /></div>
               <span className="font-bold text-xs text-zinc-200 uppercase tracking-wide">Income</span>
            </button>
@@ -464,12 +476,12 @@ const App: React.FC = () => {
         </div>
       </Modal>
 
-      <Modal isOpen={isExpenseModalOpen} onClose={() => { setIsExpenseModalOpen(false); setEditingTransaction(null); }} title={editingTransaction ? "Edit Transaction" : "Log Transaction"}>
+      <Modal isOpen={isExpenseModalOpen} onClose={closeTransactionModal} title={editingTransaction ? "Edit Transaction" : "Log Transaction"}>
         <ExpenseForm
           transaction={editingTransaction ?? undefined}
           prefill={editingTransaction ? undefined : expensePrefill ?? undefined}
           onSave={handleSaveTransaction}
-          onCancel={() => { setIsExpenseModalOpen(false); setEditingTransaction(null); setExpensePrefill(null); }}
+          onCancel={closeTransactionModal}
         />
       </Modal>
       <Modal isOpen={isDebtModalOpen} onClose={() => { setIsDebtModalOpen(false); setEditingDebt(null); }} title={editingDebt ? "Edit Debt" : "Add Debt"}>
@@ -580,9 +592,7 @@ const App: React.FC = () => {
                   setHabitStateById(next);
                   void saveHabitReminderState(next);
 
-                  setIsExpenseModalOpen(true);
-                  setEditingTransaction(null);
-                  setExpensePrefill({
+                  openTransactionModal({
                     type: 'expense',
                     category: habitReminder.category,
                     amount: habitReminder.amount,
