@@ -43,6 +43,14 @@ create table if not exists public.recurring_transactions (
   transaction_template jsonb not null
 );
 
+-- CREATE TABLE IF NOT EXISTS does not repair an older table with the same name.
+-- Add the current recurring fields explicitly so this migration is safe for
+-- projects that already had a placeholder recurring_transactions table.
+alter table public.recurring_transactions add column if not exists frequency text;
+alter table public.recurring_transactions add column if not exists next_due timestamptz;
+alter table public.recurring_transactions add column if not exists anchor_day integer;
+alter table public.recurring_transactions add column if not exists transaction_template jsonb;
+
 create table if not exists public.habit_patterns (
   habit_id text not null,
   category text not null,
