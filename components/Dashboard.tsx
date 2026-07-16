@@ -3,7 +3,6 @@ import React, { useState, useMemo, Suspense, useEffect, useRef } from 'react';
 import { Transaction, Category, Debt, Goal } from '../types';
 import { CategoryIcon } from './ui/CategoryIcon';
 import { Wallet, ShieldAlert, Landmark, TrendingUp, History, ArrowUpRight, ArrowDownRight, CalendarClock, AlertCircle, Target } from 'lucide-react';
-import { AIInsights } from './AIInsights';
 import { simulateDebtPayoff } from '../utils/debtPayoff';
 const CashFlowChart = React.lazy(() => import('./charts/CashFlowChart'));
 const CategoryChart = React.lazy(() => import('./charts/CategoryChart'));
@@ -36,7 +35,7 @@ const CountUp: React.FC<{ value: number }> = ({ value }) => {
     const duration = 1000;
     const start = performance.now();
     const animate = (now: number) => {
-      const progress = Math.min(1, (now - start) / duration);
+      const progress = Math.min(1, Math.max(0, (now - start) / duration));
       setDisplay(value * progress);
       if (progress < 1) {
         frame = requestAnimationFrame(animate);
@@ -72,7 +71,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [], 
   const isThisWeek = (date: Date) => {
     const today = new Date();
     const startOfWeek = getStartOfWeek(today);
-    return date >= startOfWeek;
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(endOfWeek.getDate() + 7);
+    return date >= startOfWeek && date < endOfWeek;
   };
 
   const isThisMonth = (date: Date) => {
@@ -92,21 +93,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [], 
     });
   }, [transactions, timeRange]);
 
-  // --- 3. Calculate Current Month Cashflow (Independent of View) ---
-  const currentMonthCashFlow = useMemo(() => {
-     const now = new Date();
-     const thisMonthTxs = transactions.filter(t => {
-        const d = new Date(t.date);
-        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-     });
-     
-     const inc = thisMonthTxs.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-     const exp = thisMonthTxs.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
-     return Math.max(0, inc - exp);
-  }, [transactions]);
-
-
-  // --- 4. Key Metrics (View Dependent) ---
+  // --- 3. Key Metrics (View Dependent) ---
   const income = filteredTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
   const expenses = filteredTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
   const todayExpenses = transactions
@@ -145,13 +132,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [], 
     // Initialize last 6 months
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = d.toLocaleString('default', { month: 'short' });
-      data[key] = { name: key, income: 0, expense: 0 };
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = d.toLocaleString('default', { month: 'short' });
+      data[key] = { name: label, income: 0, expense: 0 };
     }
 
     transactions.forEach(t => {
        const d = new Date(t.date);
-       const key = d.toLocaleString('default', { month: 'short' });
+       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
        if (data[key]) {
          if (t.type === 'income') data[key].income += t.amount;
          else data[key].expense += t.amount;
@@ -543,10 +531,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [], 
         </div>
       </div>
       
-      {/* <AIInsights 
-        debts={debts} 
-        monthlyFreeCashFlow={currentMonthCashFlow} 
-      /> */}
     </div>
   );
 };

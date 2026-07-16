@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Goal } from '../types';
-import { Target, TrendingUp, Crown } from 'lucide-react';
+import { Target, TrendingUp } from 'lucide-react';
 
 interface GoalFormProps {
-  onSave: (goal: Omit<Goal, 'id'>, existingId?: string) => void;
+  onSave: (goal: Omit<Goal, 'id'>, existingId?: string) => void | Promise<void>;
   onCancel: () => void;
   goal?: Goal;
 }
@@ -14,18 +14,31 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal }) =>
   const [currentAmount, setCurrentAmount] = useState(goal ? goal.currentAmount.toString() : '');
   const [monthlyContribution, setMonthlyContribution] = useState(goal?.monthlyContribution?.toString() ?? '');
   const [deadline, setDeadline] = useState(goal?.deadline ? goal.deadline.split('T')[0] : '');
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !targetAmount) return;
+    if (!name.trim() || !targetAmount) return;
+    const numericTarget = parseFloat(targetAmount);
+    const numericCurrent = currentAmount ? parseFloat(currentAmount) : 0;
+    const numericMonthly = monthlyContribution ? parseFloat(monthlyContribution) : 0;
+    if (!Number.isFinite(numericTarget) || numericTarget <= 0) {
+      setError('Target amount must be positive.');
+      return;
+    }
+    if (!Number.isFinite(numericCurrent) || numericCurrent < 0 || !Number.isFinite(numericMonthly) || numericMonthly < 0) {
+      setError('Saved amounts cannot be negative.');
+      return;
+    }
+    setError(null);
 
-    onSave({
-      name,
-      targetAmount: parseFloat(targetAmount),
-      currentAmount: parseFloat(currentAmount) || 0,
+    await onSave({
+      name: name.trim(),
+      targetAmount: numericTarget,
+      currentAmount: numericCurrent,
       deadline,
       icon: goal?.icon ?? '🎯',
-      monthlyContribution: parseFloat(monthlyContribution) || 0,
+      monthlyContribution: numericMonthly,
       startDate: goal?.startDate ?? new Date().toISOString()
     }, goal?.id);
   };
@@ -52,6 +65,8 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal }) =>
           <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Target (¥)</label>
           <input
             type="number"
+            min="1"
+            step="1"
             required
             value={targetAmount}
             onChange={(e) => setTargetAmount(e.target.value)}
@@ -63,6 +78,8 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal }) =>
           <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Saved (¥)</label>
           <input
             type="number"
+            min="0"
+            step="1"
             value={currentAmount}
             onChange={(e) => setCurrentAmount(e.target.value)}
             placeholder="0"
@@ -77,6 +94,8 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal }) =>
            <TrendingUp className="absolute left-3 top-3.5 text-zinc-400" size={18} />
            <input
             type="number"
+            min="0"
+            step="1"
             value={monthlyContribution}
             onChange={(e) => setMonthlyContribution(e.target.value)}
             placeholder="Projected"
@@ -94,6 +113,8 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal }) =>
           className="w-full h-12 px-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 text-zinc-200 outline-none text-sm"
         />
       </div>
+
+      {error && <p className="text-[10px] text-red-400">{error}</p>}
 
       <div className="flex gap-3 pt-2">
         <button type="button" onClick={onCancel} className="flex-1 h-12 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-400 font-bold text-xs uppercase tracking-wide rounded-lg transition-colors">Cancel</button>

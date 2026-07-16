@@ -1,5 +1,5 @@
 
-import { Category, Debt, Goal } from './types';
+import { Category } from './types';
 
 // Stoic "Moonlight" Palette: Very pale, desaturated tints that glow on black.
 export const CATEGORY_COLORS: Record<Category, string> = {
@@ -39,58 +39,4 @@ export const EXPENSE_CATEGORIES = [
   Category.Food, Category.Transport, Category.Housing, Category.Utilities, 
   Category.Entertainment, Category.Health, Category.Shopping, Category.Groceries, 
   Category.Debt, Category.Savings, Category.Other
-];
-
-export const MOCK_DATA_IF_EMPTY = [
-  { id: '1', amount: 1500, category: Category.Food, date: new Date().toISOString(), description: 'Feast at Ramen Shop', type: 'expense' },
-  { id: '2', amount: 5000, category: Category.Transport, date: new Date(Date.now() - 86400000).toISOString(), description: 'Chariot (Suica)', type: 'expense' },
-  { id: '3', amount: 450000, category: Category.Salary, date: new Date(Date.now() - 86400000 * 2).toISOString(), description: 'Imperial Stipend', type: 'income' },
-];
-
-export const MOCK_DEBTS_IF_EMPTY: Debt[] = [
-  { 
-    id: '1', 
-    person: 'Iron Bank (Card A)', 
-    amount: 230000, 
-    description: 'Revolving Payment', 
-    dueDate: new Date(new Date().getFullYear(), new Date().getMonth(), 26).toISOString(), 
-    type: 'payable', 
-    debtCategory: 'Credit Card', 
-    isPaid: false,
-    interestRate: 15.0,
-    minimumPayment: 50000 
-  },
-  { 
-    id: '2', 
-    person: 'Merchant Guild (Card B)', 
-    amount: 180000, 
-    description: 'Supplies', 
-    dueDate: new Date(new Date().getFullYear(), new Date().getMonth(), 27).toISOString(), 
-    type: 'payable', 
-    debtCategory: 'Credit Card', 
-    isPaid: false,
-    interestRate: 18.0,
-    minimumPayment: 30000 
-  },
-];
-
-export const MOCK_GOALS_IF_EMPTY: Goal[] = [
-  {
-    id: '1',
-    name: 'Conquer Europe',
-    targetAmount: 800000,
-    currentAmount: 0,
-    deadline: new Date(new Date().setFullYear(new Date().getFullYear() + 1, 11, 31)).toISOString(),
-    icon: '✈️',
-    monthlyContribution: 50000
-  },
-  {
-    id: '2',
-    name: 'Trading Bot Empire',
-    targetAmount: 1000000,
-    currentAmount: 0,
-    deadline: new Date(new Date().setMonth(new Date().getMonth() + 24)).toISOString(),
-    icon: '🤖',
-    monthlyContribution: 20000
-  }
 ];

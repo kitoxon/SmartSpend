@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Debt, DebtType, DebtCategory } from '../types';
-import { ShieldAlert } from 'lucide-react';
+import { localDateInputToIso } from '../utils/date';
 
 interface DebtFormProps {
-  onSave: (debt: Omit<Debt, 'id' | 'isPaid'>, existingId?: string) => void;
+  onSave: (debt: Omit<Debt, 'id' | 'isPaid'>, existingId?: string) => void | Promise<void>;
   onCancel: () => void;
   debt?: Debt;
 }
@@ -11,26 +11,51 @@ interface DebtFormProps {
 export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt }) => {
   const [amount, setAmount] = useState(debt ? debt.amount.toString() : '');
   const [person, setPerson] = useState(debt?.person ?? '');
-  const [description, setDescription] = useState(debt?.description ?? '');
+  const [description] = useState(debt?.description ?? '');
   const [dueDate, setDueDate] = useState(debt ? debt.dueDate.split('T')[0] : new Date().toISOString().split('T')[0]);
   const type: DebtType = 'payable';
   const [category, setCategory] = useState<DebtCategory>(debt?.debtCategory ?? 'Credit Card');
   const [interestRate, setInterestRate] = useState(debt?.interestRate?.toString() ?? '');
   const [minimumPayment, setMinimumPayment] = useState(debt?.minimumPayment?.toString() ?? '');
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!amount || !person) return;
+    if (!amount || !person.trim()) return;
+    const numericAmount = parseFloat(amount);
+    const numericInterest = interestRate ? parseFloat(interestRate) : undefined;
+    const numericMinimum = minimumPayment ? parseFloat(minimumPayment) : undefined;
+    if (!Number.isFinite(numericAmount) || numericAmount < 0 || (!debt && numericAmount === 0)) {
+      setError('Enter a positive balance.');
+      return;
+    }
+    if (numericInterest !== undefined && (!Number.isFinite(numericInterest) || numericInterest < 0 || numericInterest > 100)) {
+      setError('Interest must be between 0% and 100%.');
+      return;
+    }
+    if (numericMinimum !== undefined && (!Number.isFinite(numericMinimum) || numericMinimum <= 0)) {
+      setError('Minimum payment must be positive.');
+      return;
+    }
 
-    onSave({
-      amount: parseFloat(amount),
-      person,
+    let dueDateIso: string;
+    try {
+      dueDateIso = localDateInputToIso(dueDate);
+    } catch {
+      setError('Choose a valid due date.');
+      return;
+    }
+    setError(null);
+
+    await onSave({
+      amount: numericAmount,
+      person: person.trim(),
       description,
-      dueDate: new Date(dueDate).toISOString(),
+      dueDate: dueDateIso,
       type,
       debtCategory: category,
-      interestRate: interestRate ? parseFloat(interestRate) : undefined,
-      minimumPayment: minimumPayment ? parseFloat(minimumPayment) : undefined,
+      interestRate: numericInterest,
+      minimumPayment: numericMinimum,
     }, debt?.id);
   };
 
@@ -40,6 +65,8 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt }) =>
         <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Balance (¥)</label>
         <input
           type="number"
+          min={debt ? '0' : '1'}
+          step="1"
           required
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
@@ -65,6 +92,8 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt }) =>
           <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Interest (%)</label>
           <input
             type="number"
+            min="0"
+            max="100"
             value={interestRate}
             onChange={(e) => setInterestRate(e.target.value)}
             placeholder="15.0"
@@ -76,6 +105,8 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt }) =>
            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Min Pay (¥)</label>
           <input
             type="number"
+            min="1"
+            step="1"
             value={minimumPayment}
             onChange={(e) => setMinimumPayment(e.target.value)}
             placeholder="¥"
@@ -103,12 +134,15 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt }) =>
            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Due Date</label>
             <input
               type="date"
+              required
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
               className="w-full h-12 px-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 text-zinc-200 outline-none text-sm"
             />
         </div>
       </div>
+
+      {error && <p className="text-[10px] text-red-400">{error}</p>}
 
       <div className="flex gap-3 pt-2">
         <button type="button" onClick={onCancel} className="flex-1 h-12 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-400 font-bold text-xs uppercase tracking-wide rounded-lg transition-colors">Cancel</button>

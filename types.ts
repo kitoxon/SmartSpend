@@ -37,6 +37,7 @@ export interface RecurringTransaction {
   id: string;
   frequency: 'weekly' | 'monthly';
   nextDue: string;
+  anchorDay?: number;
   transactionTemplate: Omit<Transaction, 'id' | 'date'>;
 }
 

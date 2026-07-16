@@ -4,9 +4,10 @@ import { Category, Transaction, TransactionType, RecurringTransaction } from '..
 import { INCOME_CATEGORIES, EXPENSE_CATEGORIES } from '../constants';
 import { Repeat, TrendingDown, TrendingUp } from 'lucide-react';
 import { saveRecurringTransaction } from '../services/storageService';
+import { getNextRecurringDate, localDateInputToIso } from '../utils/date';
 
 interface TransactionFormProps {
-  onSave: (transaction: Omit<Transaction, 'id'>, existingId?: string) => void;
+  onSave: (transaction: Omit<Transaction, 'id'>, existingId?: string) => void | Promise<void>;
   onCancel: () => void;
   transaction?: Transaction;
   prefill?: Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>>;
@@ -14,17 +15,20 @@ interface TransactionFormProps {
 
 export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, transaction, prefill }) => {
   const todayLocal = new Date().toLocaleDateString('en-CA');
+  const defaultCategory = (nextType: TransactionType) => nextType === 'income' ? Category.Salary : Category.Food;
 
   const prefillDate =
     prefill?.date ? (prefill.date.includes('T') ? prefill.date.split('T')[0] : prefill.date) : todayLocal;
 
-  const [type, setType] = useState<TransactionType>(transaction?.type ?? prefill?.type ?? 'expense');
+  const initialType = transaction?.type ?? prefill?.type ?? 'expense';
+  const [type, setType] = useState<TransactionType>(initialType);
   const [amount, setAmount] = useState(transaction ? transaction.amount.toString() : prefill?.amount?.toString() ?? '');
   const [description, setDescription] = useState(transaction?.description ?? prefill?.description ?? '');
-  const [category, setCategory] = useState<Category>(transaction?.category ?? prefill?.category ?? Category.Other);
+  const [category, setCategory] = useState<Category>(transaction?.category ?? prefill?.category ?? defaultCategory(initialType));
   const [date, setDate] = useState(transaction ? transaction.date.split('T')[0] : prefillDate);
   const [isRecurring, setIsRecurring] = useState(false);
   const [frequency, setFrequency] = useState<'weekly' | 'monthly'>('monthly');
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (transaction) {
@@ -43,36 +47,48 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
     if (prefill.amount !== undefined) setAmount(prefill.amount.toString());
     if (prefill.description) setDescription(prefill.description);
     if (prefill.category) setCategory(prefill.category);
+    else if (prefill.type) setCategory(defaultCategory(prefill.type));
     if (prefill.date) setDate(prefillDate);
   }, [prefill, prefillDate, transaction]);
 
-  useEffect(() => {
-    if (transaction) return;
-    if (type === 'income') setCategory(Category.Salary);
-    else setCategory(Category.Food);
-  }, [type, transaction]);
+  const handleTypeChange = (nextType: TransactionType) => {
+    setType(nextType);
+    const allowed = nextType === 'expense' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
+    if (!allowed.includes(category)) setCategory(defaultCategory(nextType));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!amount || !description) return;
+    if (!amount || !description.trim()) return;
     const numericAmount = parseFloat(amount);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      setError('Enter a positive amount.');
+      return;
+    }
+
+    let transactionDate: string;
+    try {
+      transactionDate = localDateInputToIso(date);
+    } catch {
+      setError('Choose a valid date.');
+      return;
+    }
+    setError(null);
     
     if (isRecurring) {
+       const baseDate = new Date(transactionDate);
+       const anchorDay = baseDate.getDate();
        const rule: RecurringTransaction = {
          id: crypto.randomUUID(),
          frequency,
-         nextDue: new Date(new Date(date).setMonth(new Date(date).getMonth() + (frequency === 'monthly' ? 1 : 0))).toISOString(),
-         transactionTemplate: { amount: numericAmount, description: `(Recurring) ${description}`, category, type }
+         nextDue: getNextRecurringDate(baseDate, frequency, anchorDay).toISOString(),
+         anchorDay,
+         transactionTemplate: { amount: numericAmount, description: `(Recurring) ${description.trim()}`, category, type }
        };
-       if (frequency === 'weekly') {
-          const next = new Date(date);
-          next.setDate(next.getDate() + 7);
-          rule.nextDue = next.toISOString();
-       }
        await saveRecurringTransaction(rule);
     }
 
-    onSave({ amount: numericAmount, description, category, date: new Date(date).toISOString(), type }, transaction?.id);
+    await onSave({ amount: numericAmount, description: description.trim(), category, date: transactionDate, type }, transaction?.id);
   };
 
   const categoriesToShow = type === 'expense' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
@@ -83,7 +99,7 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
       <div className="grid grid-cols-2 gap-2 p-1 bg-zinc-800 rounded-lg border border-zinc-700/50">
         <button
           type="button"
-          onClick={() => setType('expense')}
+          onClick={() => handleTypeChange('expense')}
           className={`flex items-center justify-center gap-2 py-2.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all ${
             type === 'expense' 
               ? 'bg-zinc-700 text-white shadow-sm' 
@@ -94,7 +110,7 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
         </button>
         <button
           type="button"
-          onClick={() => setType('income')}
+          onClick={() => handleTypeChange('income')}
           className={`flex items-center justify-center gap-2 py-2.5 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all ${
             type === 'income' 
               ? 'bg-zinc-100 text-zinc-900 shadow-sm' 
@@ -110,9 +126,11 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
         <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Amount (¥)</label>
         <input
           type="number"
+          min="1"
+          step="1"
           required
           value={amount}
-          onChange={(e) => setAmount(e.target.value)}
+          onChange={(e) => { setAmount(e.target.value); setError(null); }}
           placeholder="0"
           className={`w-full h-14 px-4 bg-zinc-800 border border-zinc-700 rounded-lg focus:ring-1 transition-all text-2xl font-bold placeholder-zinc-600 outline-none ${
             type === 'income' ? 'focus:border-zinc-200 focus:ring-zinc-200 text-white' : 'focus:border-zinc-500 focus:ring-zinc-500 text-white'
@@ -162,6 +180,8 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
              <button 
                type="button"
                onClick={() => setIsRecurring(!isRecurring)}
+               aria-pressed={isRecurring}
+               aria-label="Toggle recurring transaction"
                className={`h-12 w-12 rounded-lg border flex items-center justify-center gap-2 transition-all ${isRecurring ? 'bg-zinc-100 border-zinc-200 text-zinc-900' : 'bg-zinc-800 border-zinc-700 text-zinc-500'}`}
              >
                 <Repeat size={18} />
@@ -178,6 +198,8 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
             </div>
          </div>
       )}
+
+      {error && <p className="text-[10px] text-red-400">{error}</p>}
 
       <div className="flex gap-3 pt-2">
         <button type="button" onClick={onCancel} className="flex-1 h-12 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-400 font-bold text-xs uppercase tracking-wide rounded-lg transition-colors">Cancel</button>

@@ -1,20 +1,27 @@
 
-import React, { useState, useEffect, useRef, Suspense } from 'react';
-import { ViewState, Transaction, Debt, Goal, Category } from './types';
+import React, { useState, useEffect, useRef, Suspense, useCallback } from 'react';
+import type { Session } from '@supabase/supabase-js';
+import { ViewState, Transaction, Debt, Goal, Category, RecurringTransaction } from './types';
 import { 
   getTransactions, saveTransaction, deleteTransaction, 
   getDebts, saveDebt, deleteDebt,
   getGoals, saveGoal, deleteGoal,
-  processRecurringTransactions
+  getRecurringTransactions, deleteRecurringTransaction,
+  processRecurringTransactions, syncPendingChanges,
+  subscribeToSyncState, getSyncSnapshot, clearLocalFinancialData,
+  SyncSnapshot,
 } from './services/storageService';
 import { buildHabitPatterns, findDueHabitReminder, HabitReminderCandidate, HabitReminderState } from './services/habitService';
 import { getHabitPatterns, getHabitReminderState, saveHabitPatterns, saveHabitReminderState } from './services/habitStorageService';
-import { MOCK_DEBTS_IF_EMPTY, MOCK_GOALS_IF_EMPTY } from './constants';
 import { ExpenseForm } from './components/ExpenseForm';
 import { DebtForm } from './components/DebtForm';
 import { GoalForm } from './components/GoalForm';
+import { AuthScreen } from './components/AuthScreen';
+import { SettingsPanel } from './components/SettingsPanel';
 import { Modal } from './components/ui/Modal';
-import { LayoutDashboard, List as ListIcon, Plus, Wallet, ArrowRightLeft, Target, DollarSign, TrendingDown, TrendingUp, ShieldAlert, Landmark } from 'lucide-react';
+import { addMonthsClamped } from './utils/date';
+import { supabase } from './services/supabaseClient';
+import { LayoutDashboard, List as ListIcon, Plus, ArrowRightLeft, Target, DollarSign, TrendingDown, TrendingUp, ShieldAlert, Landmark, Settings, Cloud, CloudOff, RefreshCw } from 'lucide-react';
 
 const Dashboard = React.lazy(() => import('./components/Dashboard').then(m => ({ default: m.Dashboard })));
 const ExpenseList = React.lazy(() => import('./components/ExpenseList').then(m => ({ default: m.ExpenseList })));
@@ -25,14 +32,20 @@ const App: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [debts, setDebts] = useState<Debt[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [recurringRules, setRecurringRules] = useState<RecurringTransaction[]>([]);
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [authReady, setAuthReady] = useState(!supabase);
+  const [session, setSession] = useState<Session | null>(null);
+  const [syncState, setSyncState] = useState<SyncSnapshot>(getSyncSnapshot());
 
   const [habitReminder, setHabitReminder] = useState<HabitReminderCandidate | null>(null);
   const [habitStateById, setHabitStateById] = useState<Record<string, HabitReminderState>>({});
   const [habitPatterns, setHabitPatternsState] = useState<ReturnType<typeof buildHabitPatterns>>([]);
   const [expensePrefill, setExpensePrefill] = useState<Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>> | null>(null);
   const habitsInitialized = useRef(false);
+  const dataLoadInFlight = useRef<Promise<void> | null>(null);
   
   // Modal states
   const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false);
@@ -43,9 +56,12 @@ const App: React.FC = () => {
   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [fundAmountToAdd, setFundAmountToAdd] = useState('');
   const [isPayDebtModalOpen, setIsPayDebtModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [selectedDebtId, setSelectedDebtId] = useState<string | null>(null);
   const [debtPaymentAmount, setDebtPaymentAmount] = useState('');
-  const [pendingDelete, setPendingDelete] = useState<{ type: 'transaction' | 'debt' | 'goal'; id: string } | null>(null);
+  const [debtPaymentError, setDebtPaymentError] = useState<string | null>(null);
+  const [fundError, setFundError] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ type: 'transaction' | 'debt' | 'goal' | 'recurring'; id: string } | null>(null);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [editingDebt, setEditingDebt] = useState<Debt | null>(null);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
@@ -73,28 +89,78 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    const loadData = async () => {
-      await processRecurringTransactions();
-      const [txs, dbs, gls] = await Promise.all([getTransactions(), getDebts(), getGoals()]);
-      setTransactions(txs);
-      
-      if (dbs.length === 0) {
-         const validMocks = MOCK_DEBTS_IF_EMPTY.filter(d => d.type === 'payable');
-         setDebts(validMocks);
-      } else {
-         setDebts(dbs);
-      }
-
-      if (gls.length === 0) {
-          setGoals(MOCK_GOALS_IF_EMPTY);
-      } else {
-          setGoals(gls);
-      }
-
-      setIsLoading(false);
+    if (!supabase) return;
+    let mounted = true;
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (!mounted) return;
+      if (error) setLoadError(error.message);
+      setSession(data.session);
+      setAuthReady(true);
+    });
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthReady(true);
+    });
+    return () => {
+      mounted = false;
+      authListener.subscription.unsubscribe();
     };
-    loadData();
   }, []);
+
+  const loadData = useCallback((showLoading = true) => {
+    if (!authReady || (supabase && !session)) return Promise.resolve();
+    if (dataLoadInFlight.current) return dataLoadInFlight.current;
+
+    const task = (async () => {
+      if (showLoading) setIsLoading(true);
+      setLoadError(null);
+      try {
+        await syncPendingChanges();
+        await processRecurringTransactions();
+        const [txs, dbs, gls, rules] = await Promise.all([
+          getTransactions(),
+          getDebts(),
+          getGoals(),
+          getRecurringTransactions(),
+        ]);
+        setTransactions(txs);
+        setDebts(dbs);
+        setGoals(gls);
+        setRecurringRules(rules);
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : 'Could not load your data');
+      } finally {
+        setIsLoading(false);
+      }
+    })();
+
+    dataLoadInFlight.current = task.finally(() => {
+      dataLoadInFlight.current = null;
+    });
+    return dataLoadInFlight.current;
+  }, [authReady, session?.user.id]);
+
+  useEffect(() => {
+    habitsInitialized.current = false;
+    void loadData(true);
+  }, [loadData]);
+
+  useEffect(() => subscribeToSyncState(setSyncState), []);
+
+  useEffect(() => {
+    const syncOnReconnect = () => void loadData(false);
+    const syncOnFocus = () => {
+      if (document.visibilityState === 'visible') void loadData(false);
+    };
+    window.addEventListener('online', syncOnReconnect);
+    window.addEventListener('focus', syncOnFocus);
+    document.addEventListener('visibilitychange', syncOnFocus);
+    return () => {
+      window.removeEventListener('online', syncOnReconnect);
+      window.removeEventListener('focus', syncOnFocus);
+      document.removeEventListener('visibilitychange', syncOnFocus);
+    };
+  }, [loadData]);
 
   // Habits bootstrap (Supabase-first, local fallback)
   useEffect(() => {
@@ -197,6 +263,7 @@ const App: React.FC = () => {
       setTransactions(prev => [newTx, ...prev]);
       await saveTransaction(newTx);
     }
+    setRecurringRules(await getRecurringTransactions());
     setEditingTransaction(null);
     setExpensePrefill(null);
     setIsExpenseModalOpen(false);
@@ -208,7 +275,7 @@ const App: React.FC = () => {
 
   const handleSaveDebt = async (newDebtData: Omit<Debt, 'id' | 'isPaid'>, existingId?: string) => {
     if (existingId) {
-      const updated: Debt = { ...newDebtData, id: existingId, isPaid: false };
+      const updated: Debt = { ...newDebtData, id: existingId, isPaid: newDebtData.amount <= 0 };
       setDebts(prev => prev.map(d => d.id === existingId ? updated : d));
       await saveDebt(updated);
     } else {
@@ -228,7 +295,8 @@ const App: React.FC = () => {
      const debt = debts.find(d => d.id === id);
      if (debt) {
         setSelectedDebtId(id);
-        setDebtPaymentAmount(debt.minimumPayment ? debt.minimumPayment.toString() : debt.amount.toString());
+        setDebtPaymentAmount(Math.min(debt.minimumPayment ?? debt.amount, debt.amount).toString());
+        setDebtPaymentError(null);
         setIsPayDebtModalOpen(true);
      }
   };
@@ -238,19 +306,25 @@ const App: React.FC = () => {
      if (!selectedDebtId || !debtPaymentAmount) return;
 
      const amount = parseFloat(debtPaymentAmount);
-     if (isNaN(amount) || amount <= 0) return;
+     if (!Number.isFinite(amount) || amount <= 0) {
+       setDebtPaymentError('Enter a positive payment amount.');
+       return;
+     }
 
      const debt = debts.find(d => d.id === selectedDebtId);
      if (debt) {
-        const principalPayment = Math.max(0, amount);
+        if (amount > debt.amount) {
+          setDebtPaymentError(`Payment cannot exceed the ¥${debt.amount.toLocaleString()} balance.`);
+          return;
+        }
+        const principalPayment = Math.min(amount, debt.amount);
         const monthlyRate = (debt.interestRate ?? 0) / 100 / 12;
         const interestDue = monthlyRate > 0 ? Math.round(debt.amount * monthlyRate) : 0;
         const totalCharge = principalPayment + interestDue;
         const newBalance = Math.max(0, debt.amount - principalPayment);
         const isPaidOff = newBalance === 0;
         const currentDue = new Date(debt.dueDate || new Date().toISOString());
-        const nextDue = new Date(currentDue);
-        nextDue.setMonth(nextDue.getMonth() + 1);
+        const nextDue = addMonthsClamped(currentDue, 1, currentDue.getDate());
 
         const updatedDebt = { ...debt, amount: newBalance, isPaid: isPaidOff, dueDate: nextDue.toISOString() };
         setDebts(prev => prev.map(d => d.id === selectedDebtId ? updatedDebt : d));
@@ -272,6 +346,7 @@ const App: React.FC = () => {
 
      setIsPayDebtModalOpen(false);
      setSelectedDebtId(null);
+     setDebtPaymentError(null);
   };
 
   const handleSaveGoal = async (newGoalData: Omit<Goal, 'id'>, existingId?: string) => {
@@ -305,6 +380,9 @@ const App: React.FC = () => {
     } else if (type === 'goal') {
       setGoals(prev => prev.filter(g => g.id !== id));
       await deleteGoal(id);
+    } else if (type === 'recurring') {
+      setRecurringRules(prev => prev.filter(rule => rule.id !== id));
+      await deleteRecurringTransaction(id);
     }
 
     setPendingDelete(null);
@@ -313,6 +391,7 @@ const App: React.FC = () => {
   const handleOpenAddFunds = (id: string) => {
     setSelectedGoalId(id);
     setFundAmountToAdd('');
+    setFundError(null);
     setIsAddFundsModalOpen(true);
   };
 
@@ -320,7 +399,10 @@ const App: React.FC = () => {
     e.preventDefault();
     if (selectedGoalId && fundAmountToAdd) {
       const amount = parseFloat(fundAmountToAdd);
-      if (isNaN(amount) || amount <= 0) return;
+      if (!Number.isFinite(amount) || amount <= 0) {
+        setFundError('Enter a positive amount.');
+        return;
+      }
 
       const goal = goals.find(g => g.id === selectedGoalId);
       if (goal) {
@@ -342,7 +424,36 @@ const App: React.FC = () => {
       
       setIsAddFundsModalOpen(false);
       setSelectedGoalId(null);
+      setFundError(null);
     }
+  };
+
+  const handleSignOut = async () => {
+    if (!supabase || !session) return;
+    clearLocalFinancialData(session.user.id);
+    await supabase.auth.signOut();
+    setIsSettingsModalOpen(false);
+    setTransactions([]);
+    setDebts([]);
+    setGoals([]);
+    setRecurringRules([]);
+  };
+
+  const handleExport = () => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      transactions,
+      debts,
+      goals,
+      recurringTransactions: recurringRules,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `smartspend-backup-${todayLocal()}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleFabClick = () => {
@@ -356,6 +467,14 @@ const App: React.FC = () => {
       openTransactionModal();
     }
   };
+
+  const selectedDebt = selectedDebtId ? debts.find((debt) => debt.id === selectedDebtId) ?? null : null;
+  const paymentPrincipalPreview = Math.min(Math.max(parseFloat(debtPaymentAmount) || 0, 0), selectedDebt?.amount ?? 0);
+  const paymentInterestPreview = selectedDebt
+    ? Math.round(selectedDebt.amount * ((selectedDebt.interestRate ?? 0) / 100 / 12))
+    : 0;
+
+  if (authReady && supabase && !session) return <AuthScreen />;
 
   if (isLoading) {
     return (
@@ -404,14 +523,45 @@ const App: React.FC = () => {
       }}
     >
       {/* Header - Minimal & Translucent */}
-      <header className="bg-black/70 backdrop-blur-md px-5 py-4 sticky top-0 z-20 border-b border-zinc-900/80 flex items-center justify-between">
+      <header className="bg-black/70 backdrop-blur-md px-5 py-3.5 sticky top-0 z-20 border-b border-zinc-900/80 flex items-center justify-between">
         <div className="flex items-center gap-2.5 text-zinc-100">
           <div className="p-1.5 rounded-md bg-zinc-100 text-black">
              <Landmark className="w-3.5 h-3.5" strokeWidth={3} />
           </div>
           <h1 className="text-sm font-bold tracking-wide text-white">SmartSpend</h1>
         </div>
+        <button
+          onClick={() => setIsSettingsModalOpen(true)}
+          className="relative h-9 px-3 rounded-full border border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white flex items-center gap-2 transition-colors"
+          aria-label="Open sync and settings"
+        >
+          {syncState.isSyncing ? (
+            <RefreshCw size={14} className="animate-spin" />
+          ) : syncState.lastError || syncState.pendingCount > 0 ? (
+            <CloudOff size={14} className="text-amber-400" />
+          ) : (
+            <Cloud size={14} className={supabase ? 'text-emerald-400' : 'text-zinc-500'} />
+          )}
+          <Settings size={13} />
+          {syncState.pendingCount > 0 && (
+            <span className="absolute -right-1 -top-1 min-w-4 h-4 px-1 rounded-full bg-amber-400 text-black text-[9px] font-bold flex items-center justify-center">
+              {syncState.pendingCount}
+            </span>
+          )}
+        </button>
       </header>
+
+      {(loadError || syncState.lastError) && (
+        <div className="mx-4 mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2.5 flex items-start justify-between gap-3 relative z-10">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-amber-300">Cloud sync needs attention</p>
+            <p className="text-[10px] text-amber-200/70 mt-1 line-clamp-2">{loadError ?? syncState.lastError}</p>
+          </div>
+          <button onClick={() => void loadData(false)} className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-amber-200 flex items-center gap-1">
+            <RefreshCw size={11} /> Retry
+          </button>
+        </div>
+      )}
 
       <main className="p-4 min-h-[calc(100vh-140px)] relative z-10">
         <Suspense fallback={<div className="text-sm text-zinc-500">Loading...</div>}>
@@ -427,6 +577,7 @@ const App: React.FC = () => {
         <div className="w-full max-w-md px-4 flex justify-end">
           <button
             onClick={handleFabClick}
+            aria-label={currentView === 'dashboard' ? 'Open quick actions' : currentView === 'list' ? 'Add transaction' : currentView === 'debts' ? 'Add debt' : 'Add goal'}
             className="pointer-events-auto bg-white text-black h-12 w-12 rounded-full shadow-xl shadow-zinc-900/50 transition-all active:scale-90 hover:scale-105 flex items-center justify-center border border-zinc-200"
           >
             <Plus size={24} strokeWidth={2.5} />
@@ -491,28 +642,37 @@ const App: React.FC = () => {
         <GoalForm goal={editingGoal ?? undefined} onSave={handleSaveGoal} onCancel={() => { setIsGoalModalOpen(false); setEditingGoal(null); }} />
       </Modal>
       
-      <Modal isOpen={isAddFundsModalOpen} onClose={() => setIsAddFundsModalOpen(false)} title="Add Funds">
+      <Modal isOpen={isAddFundsModalOpen} onClose={() => { setIsAddFundsModalOpen(false); setFundError(null); }} title="Add Funds">
         <form onSubmit={handleSubmitFunds} className="space-y-4">
           <div>
             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Amount (¥)</label>
             <div className="relative">
               <DollarSign className="absolute left-3 top-3.5 text-zinc-400" size={18} />
-              <input type="number" required autoFocus value={fundAmountToAdd} onChange={(e) => setFundAmountToAdd(e.target.value)} className="w-full pl-10 h-12 bg-zinc-900 border border-zinc-800 rounded-lg text-white text-lg font-bold focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 outline-none" />
+              <input type="number" min="1" step="1" required autoFocus value={fundAmountToAdd} onChange={(e) => { setFundAmountToAdd(e.target.value); setFundError(null); }} className="w-full pl-10 h-12 bg-zinc-900 border border-zinc-800 rounded-lg text-white text-lg font-bold focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 outline-none" />
             </div>
+            {fundError && <p className="text-[10px] text-red-400 mt-1.5">{fundError}</p>}
           </div>
           <button type="submit" className="w-full h-12 bg-white hover:bg-zinc-200 text-black font-bold rounded-lg text-xs uppercase tracking-wider">Confirm</button>
         </form>
       </Modal>
 
-      <Modal isOpen={isPayDebtModalOpen} onClose={() => setIsPayDebtModalOpen(false)} title="Pay Debt">
+      <Modal isOpen={isPayDebtModalOpen} onClose={() => { setIsPayDebtModalOpen(false); setDebtPaymentError(null); }} title="Pay Debt">
         <form onSubmit={handleSubmitDebtPayment} className="space-y-4">
           <div>
-            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Amount (¥)</label>
+            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Principal amount (¥)</label>
             <div className="relative">
               <DollarSign className="absolute left-3 top-3.5 text-zinc-400" size={18} />
-              <input type="number" required autoFocus value={debtPaymentAmount} onChange={(e) => setDebtPaymentAmount(e.target.value)} className="w-full pl-10 h-12 bg-zinc-900 border border-zinc-800 rounded-lg text-white text-lg font-bold focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 outline-none" />
+              <input type="number" min="1" max={selectedDebt?.amount} step="1" required autoFocus value={debtPaymentAmount} onChange={(e) => { setDebtPaymentAmount(e.target.value); setDebtPaymentError(null); }} className="w-full pl-10 h-12 bg-zinc-900 border border-zinc-800 rounded-lg text-white text-lg font-bold focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 outline-none" />
             </div>
+            {debtPaymentError && <p className="text-[10px] text-red-400 mt-1.5">{debtPaymentError}</p>}
           </div>
+          {selectedDebt && (
+            <div className="rounded-lg bg-zinc-950 border border-zinc-800 p-3 space-y-1.5 text-[11px]">
+              <div className="flex justify-between text-zinc-500"><span>Outstanding balance</span><span>¥{selectedDebt.amount.toLocaleString()}</span></div>
+              <div className="flex justify-between text-zinc-500"><span>Estimated monthly interest</span><span>¥{paymentInterestPreview.toLocaleString()}</span></div>
+              <div className="flex justify-between text-zinc-200 font-bold pt-1.5 border-t border-zinc-800"><span>Total expense recorded</span><span>¥{(paymentPrincipalPreview + paymentInterestPreview).toLocaleString()}</span></div>
+            </div>
+          )}
           <button type="submit" className="w-full h-12 bg-white hover:bg-zinc-200 text-black font-bold rounded-lg text-xs uppercase tracking-wider shadow-lg">Confirm Payment</button>
         </form>
       </Modal>
@@ -528,6 +688,7 @@ const App: React.FC = () => {
             {pendingDelete?.type === 'transaction' && 'Delete this transaction?'}
             {pendingDelete?.type === 'debt' && 'Delete this debt?'}
             {pendingDelete?.type === 'goal' && 'Delete this goal?'}
+            {pendingDelete?.type === 'recurring' && 'Stop this recurring transaction? Existing entries will remain.'}
           </p>
           <div className="flex gap-3">
             <button
@@ -546,6 +707,21 @@ const App: React.FC = () => {
             </button>
           </div>
         </div>
+      </Modal>
+
+      <Modal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} title="Sync & Settings">
+        <SettingsPanel
+          email={session?.user.email ?? null}
+          sync={syncState}
+          recurringRules={recurringRules}
+          onRetrySync={() => void loadData(false)}
+          onDeleteRecurring={(id) => {
+            setIsSettingsModalOpen(false);
+            setPendingDelete({ type: 'recurring', id });
+          }}
+          onExport={handleExport}
+          onSignOut={() => void handleSignOut()}
+        />
       </Modal>
 
       <style>{`

@@ -13,10 +13,31 @@ const safeJsonParse = <T,>(raw: string | null, fallback: T): T => {
   }
 };
 
+const getUserId = async () => {
+  if (!supabase) return null;
+  const { data } = await supabase.auth.getSession();
+  return data.session?.user.id ?? null;
+};
+
+const scopedKey = (key: string, userId: string | null) => userId ? `${key}:${userId}` : key;
+
+const readLocal = <T,>(key: string, userId: string | null, fallback: T) => {
+  const current = localStorage.getItem(scopedKey(key, userId));
+  if (current) return safeJsonParse<T>(current, fallback);
+  const legacy = userId ? localStorage.getItem(key) : null;
+  if (legacy) {
+    localStorage.setItem(scopedKey(key, userId), legacy);
+    return safeJsonParse<T>(legacy, fallback);
+  }
+  return fallback;
+};
+
 export const getHabitPatterns = async (): Promise<HabitPattern[]> => {
+  const userId = await getUserId();
   if (supabase) {
     try {
-      const { data, error } = await supabase.from('habit_patterns').select('*');
+      if (!userId) return [];
+      const { data, error } = await supabase.from('habit_patterns').select('*').eq('user_id', userId);
       if (!error && data) {
         return (data as any[]).map((row) => ({
           habitId: row.habit_id,
@@ -39,13 +60,14 @@ export const getHabitPatterns = async (): Promise<HabitPattern[]> => {
     }
   }
 
-  return safeJsonParse<HabitPattern[]>(localStorage.getItem(HABIT_PATTERNS_KEY), []);
+  return readLocal<HabitPattern[]>(HABIT_PATTERNS_KEY, userId, []);
 };
 
 export const saveHabitPatterns = async (patterns: HabitPattern[]): Promise<void> => {
-  localStorage.setItem(HABIT_PATTERNS_KEY, JSON.stringify(patterns));
+  const userId = await getUserId();
+  localStorage.setItem(scopedKey(HABIT_PATTERNS_KEY, userId), JSON.stringify(patterns));
 
-  if (!supabase) return;
+  if (!supabase || !userId || patterns.length === 0) return;
   try {
     const rows = patterns.map((p) => ({
       habit_id: p.habitId,
@@ -61,17 +83,20 @@ export const saveHabitPatterns = async (patterns: HabitPattern[]): Promise<void>
       time_end_min: p.timeWindowEndMin,
       active: p.active,
       updated_at: p.updatedAt,
+      user_id: userId,
     }));
-    await supabase.from('habit_patterns').upsert(rows, { onConflict: 'habit_id' });
+    await supabase.from('habit_patterns').upsert(rows, { onConflict: 'user_id,habit_id' });
   } catch {
     // Best-effort only.
   }
 };
 
 export const getHabitReminderState = async (): Promise<Record<string, HabitReminderState>> => {
+  const userId = await getUserId();
   if (supabase) {
     try {
-      const { data, error } = await supabase.from('habit_reminder_state').select('*');
+      if (!userId) return {};
+      const { data, error } = await supabase.from('habit_reminder_state').select('*').eq('user_id', userId);
       if (!error && data) {
         const out: Record<string, HabitReminderState> = {};
         for (const row of data as any[]) {
@@ -89,15 +114,16 @@ export const getHabitReminderState = async (): Promise<Record<string, HabitRemin
     }
   }
 
-  return safeJsonParse<Record<string, HabitReminderState>>(localStorage.getItem(HABIT_STATE_KEY), {});
+  return readLocal<Record<string, HabitReminderState>>(HABIT_STATE_KEY, userId, {});
 };
 
 export const saveHabitReminderState = async (
   stateByHabitId: Record<string, HabitReminderState>
 ): Promise<void> => {
-  localStorage.setItem(HABIT_STATE_KEY, JSON.stringify(stateByHabitId));
+  const userId = await getUserId();
+  localStorage.setItem(scopedKey(HABIT_STATE_KEY, userId), JSON.stringify(stateByHabitId));
 
-  if (!supabase) return;
+  if (!supabase || !userId || Object.keys(stateByHabitId).length === 0) return;
   try {
     const rows = Object.values(stateByHabitId).map((s) => ({
       habit_id: s.habitId,
@@ -105,10 +131,10 @@ export const saveHabitReminderState = async (
       snoozed_until: s.snoozedUntil,
       dismiss_count_recent: s.dismissCountRecent,
       updated_at: new Date().toISOString(),
+      user_id: userId,
     }));
-    await supabase.from('habit_reminder_state').upsert(rows, { onConflict: 'habit_id' });
+    await supabase.from('habit_reminder_state').upsert(rows, { onConflict: 'user_id,habit_id' });
   } catch {
     // Best-effort only.
   }
 };
-

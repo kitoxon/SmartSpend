@@ -321,7 +321,7 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
             <p className="text-xs mt-1">Try adjusting filters or add a new one.</p>
           </div>
         ) : groupedTransactions ? (
-          Object.entries(groupedTransactions).map(([dateLabel, txs]) => (
+          (Object.entries(groupedTransactions) as [string, Transaction[]][]).map(([dateLabel, txs]) => (
             <div key={dateLabel} className="animate-fade-in">
               <div className="sticky top-24 md:top-16 z-0 bg-black py-2 mb-1 border-b border-zinc-900/50">
                 <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider pl-1">{dateLabel}</h3>

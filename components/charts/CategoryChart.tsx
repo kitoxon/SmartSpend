@@ -1,6 +1,7 @@
 import React from 'react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend } from 'recharts';
-import { Category, CATEGORY_COLORS } from '../../constants';
+import { CATEGORY_COLORS } from '../../constants';
+import { Category } from '../../types';
 
 type CategoryDatum = { name: Category; value: number };
 

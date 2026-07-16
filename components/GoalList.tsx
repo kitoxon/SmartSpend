@@ -1,6 +1,6 @@
 import React from 'react';
 import { Goal } from '../types';
-import { Target, Trophy, Plus, Trash2, AlertCircle, CalendarClock, CheckCircle2, Crown, Flag } from 'lucide-react';
+import { Target, Trophy, Plus, Trash2, AlertCircle, CalendarClock, CheckCircle2, Flag } from 'lucide-react';
 
 interface GoalListProps {
   goals: Goal[];

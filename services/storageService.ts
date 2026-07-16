@@ -1,203 +1,523 @@
-
 import { Transaction, Debt, Goal, RecurringTransaction } from '../types';
-import { MOCK_DATA_IF_EMPTY, MOCK_DEBTS_IF_EMPTY } from '../constants';
+import { deterministicUuid, getNextRecurringDate } from '../utils/date';
 import { supabase } from './supabaseClient';
 
-const STORAGE_KEY = 'smartspend_data_v2'; 
+const STORAGE_KEY = 'smartspend_data_v2';
 const DEBT_STORAGE_KEY = 'smartspend_debts_v2';
 const GOAL_STORAGE_KEY = 'smartspend_goals_v1';
 const RECURRING_KEY = 'smartspend_recurring_v1';
+const OUTBOX_KEY = 'smartspend_sync_outbox_v1';
+const SYNC_EVENT = 'smartspend:sync-state';
+const legacyMarkerKey = (baseKey: string, userId: string) => `${baseKey}:legacy-adopted:${userId}`;
 
-/*
-  SUPABASE SCHEMA INSTRUCTIONS:
-  If using Supabase, create these tables:
-  transactions, debts, goals, recurring_transactions, habit_patterns, habit_reminder_state
-*/
+type SyncTable = 'transactions' | 'debts' | 'goals' | 'recurring_transactions';
 
-// --- Transactions ---
+interface PendingMutation {
+  mutationId: string;
+  userId: string;
+  table: SyncTable;
+  action: 'upsert' | 'delete';
+  recordId: string;
+  record?: Record<string, unknown>;
+  queuedAt: string;
+}
 
-const sortTransactions = (list: Transaction[]) => {
-  return [...list].sort((a, b) => {
-    const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
-    if (dateDiff !== 0) return dateDiff;
-    const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
-    const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
-    return cb - ca;
-  });
+export interface SyncSnapshot {
+  isSyncing: boolean;
+  pendingCount: number;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+}
+
+let syncSnapshot: SyncSnapshot = {
+  isSyncing: false,
+  pendingCount: 0,
+  lastSyncedAt: null,
+  lastError: null,
+};
+let activeSync: Promise<SyncSnapshot> | null = null;
+
+const safeJsonParse = <T,>(raw: string | null, fallback: T): T => {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
 };
 
+const getOutbox = () => safeJsonParse<PendingMutation[]>(localStorage.getItem(OUTBOX_KEY), []);
+
+const emitSyncSnapshot = (patch: Partial<SyncSnapshot> = {}) => {
+  syncSnapshot = {
+    ...syncSnapshot,
+    ...patch,
+    pendingCount: getOutbox().length,
+  };
+  window.dispatchEvent(new CustomEvent<SyncSnapshot>(SYNC_EVENT, { detail: syncSnapshot }));
+};
+
+const errorMessage = (error: unknown) => {
+  if (error && typeof error === 'object' && 'message' in error) return String(error.message);
+  return error instanceof Error ? error.message : 'Cloud sync failed';
+};
+
+const getUserId = async () => {
+  if (!supabase) return null;
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  return data.session?.user.id ?? null;
+};
+
+const getRequiredUserId = async () => {
+  const userId = await getUserId();
+  if (!userId) throw new Error('Sign in is required to sync data');
+  return userId;
+};
+
+const scopedKey = (baseKey: string, userId: string | null) => userId ? `${baseKey}:${userId}` : baseKey;
+
+const readLocal = <T,>(baseKey: string, userId: string | null, fallback: T): T => {
+  const key = scopedKey(baseKey, userId);
+  const scoped = localStorage.getItem(key);
+  if (scoped) return safeJsonParse(scoped, fallback);
+
+  // Adopt the pre-auth cache once so an existing installation remains usable during migration.
+  if (userId) {
+    const legacy = localStorage.getItem(baseKey);
+    if (legacy) {
+      localStorage.setItem(key, legacy);
+      localStorage.setItem(legacyMarkerKey(baseKey, userId), '1');
+      return safeJsonParse(legacy, fallback);
+    }
+  }
+  return fallback;
+};
+
+const writeLocal = <T,>(baseKey: string, userId: string | null, value: T) => {
+  localStorage.setItem(scopedKey(baseKey, userId), JSON.stringify(value));
+};
+
+const stripOwner = <T,>(row: T & { user_id?: string }): T => {
+  const { user_id: _userId, ...record } = row;
+  return record as T;
+};
+
+const sortTransactions = (list: Transaction[]) => [...list].sort((a, b) => {
+  const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
+  if (dateDiff !== 0) return dateDiff;
+  const ca = a.created_at ? new Date(a.created_at).getTime() : 0;
+  const cb = b.created_at ? new Date(b.created_at).getTime() : 0;
+  return cb - ca;
+});
+
+const applyRemoteMutation = async (mutation: PendingMutation) => {
+  if (!supabase) return;
+  if (mutation.action === 'upsert') {
+    const { error } = await supabase
+      .from(mutation.table)
+      .upsert({ ...mutation.record, user_id: mutation.userId });
+    if (error) throw error;
+    return;
+  }
+
+  const { error } = await supabase
+    .from(mutation.table)
+    .delete()
+    .eq('id', mutation.recordId)
+    .eq('user_id', mutation.userId);
+  if (error) throw error;
+};
+
+const queueMutation = (mutation: Omit<PendingMutation, 'mutationId' | 'queuedAt'>) => {
+  const pending = getOutbox().filter((item) => !(
+    item.userId === mutation.userId &&
+    item.table === mutation.table &&
+    item.recordId === mutation.recordId
+  ));
+  pending.push({
+    ...mutation,
+    mutationId: crypto.randomUUID(),
+    queuedAt: new Date().toISOString(),
+  });
+  localStorage.setItem(OUTBOX_KEY, JSON.stringify(pending));
+  emitSyncSnapshot();
+};
+
+const removeQueuedEntity = (userId: string, table: SyncTable, recordId: string) => {
+  const remaining = getOutbox().filter((item) => !(
+    item.userId === userId && item.table === table && item.recordId === recordId
+  ));
+  localStorage.setItem(OUTBOX_KEY, JSON.stringify(remaining));
+  return remaining;
+};
+
+const syncMutation = async (mutation: Omit<PendingMutation, 'mutationId' | 'queuedAt'>) => {
+  if (!supabase) return;
+  const queued: PendingMutation = {
+    ...mutation,
+    mutationId: crypto.randomUUID(),
+    queuedAt: new Date().toISOString(),
+  };
+  try {
+    await applyRemoteMutation(queued);
+    const remaining = removeQueuedEntity(mutation.userId, mutation.table, mutation.recordId);
+    emitSyncSnapshot({
+      lastSyncedAt: new Date().toISOString(),
+      lastError: remaining.length === 0 ? null : syncSnapshot.lastError,
+    });
+  } catch (error) {
+    queueMutation(mutation);
+    emitSyncSnapshot({ lastError: errorMessage(error) });
+  }
+};
+
+const isDemoRecord = (table: SyncTable, record: Record<string, unknown>) => {
+  if (table === 'transactions') {
+    return ['Feast at Ramen Shop', 'Chariot (Suica)', 'Imperial Stipend'].includes(String(record.description));
+  }
+  if (table === 'debts') {
+    return ['Iron Bank (Card A)', 'Merchant Guild (Card B)'].includes(String(record.person));
+  }
+  if (table === 'goals') {
+    return ['Conquer Europe', 'Trading Bot Empire'].includes(String(record.name));
+  }
+  return false;
+};
+
+const finishLegacyAdoption = (baseKey: string, userId: string) => {
+  localStorage.removeItem(baseKey);
+  localStorage.removeItem(legacyMarkerKey(baseKey, userId));
+};
+
+const migrateLegacyRowsIfNeeded = async <T extends { id: string }>(
+  baseKey: string,
+  table: SyncTable,
+  userId: string,
+  localRows: T[],
+  toRemoteRecord: (row: T) => Record<string, unknown> = (row) => ({ ...row }),
+): Promise<T[] | null> => {
+  if (!localStorage.getItem(legacyMarkerKey(baseKey, userId))) return null;
+  const candidates = localRows.filter((row) => !isDemoRecord(table, toRemoteRecord(row)));
+  writeLocal(baseKey, userId, candidates);
+
+  for (const row of candidates) {
+    await syncMutation({
+      userId,
+      table,
+      action: 'upsert',
+      recordId: row.id,
+      record: toRemoteRecord(row),
+    });
+  }
+
+  if (!getOutbox().some((item) => item.userId === userId && item.table === table)) {
+    finishLegacyAdoption(baseKey, userId);
+  }
+  return candidates;
+};
+
+export const getSyncSnapshot = () => ({
+  ...syncSnapshot,
+  pendingCount: getOutbox().length,
+});
+
+export const subscribeToSyncState = (listener: (snapshot: SyncSnapshot) => void) => {
+  const handler = (event: Event) => listener((event as CustomEvent<SyncSnapshot>).detail);
+  window.addEventListener(SYNC_EVENT, handler);
+  listener(getSyncSnapshot());
+  return () => window.removeEventListener(SYNC_EVENT, handler);
+};
+
+export const syncPendingChanges = async (): Promise<SyncSnapshot> => {
+  if (!supabase) return getSyncSnapshot();
+  if (activeSync) return activeSync;
+
+  activeSync = (async () => {
+    emitSyncSnapshot({ isSyncing: true });
+    let userId: string | null;
+    try {
+      userId = await getUserId();
+    } catch (error) {
+      emitSyncSnapshot({ isSyncing: false, lastError: errorMessage(error) });
+      return getSyncSnapshot();
+    }
+    if (!userId) {
+      emitSyncSnapshot({ isSyncing: false });
+      return getSyncSnapshot();
+    }
+
+    const pendingForUser = getOutbox().filter((item) => item.userId === userId);
+    for (const mutation of pendingForUser) {
+      try {
+        await applyRemoteMutation(mutation);
+        const remaining = getOutbox().filter((item) => item.mutationId !== mutation.mutationId);
+        localStorage.setItem(OUTBOX_KEY, JSON.stringify(remaining));
+      } catch (error) {
+        emitSyncSnapshot({ isSyncing: false, lastError: errorMessage(error) });
+        return getSyncSnapshot();
+      }
+    }
+
+    emitSyncSnapshot({
+      isSyncing: false,
+      lastSyncedAt: new Date().toISOString(),
+      lastError: null,
+    });
+    return getSyncSnapshot();
+  })().finally(() => {
+    activeSync = null;
+  });
+
+  return activeSync;
+};
+
+const prepareCloudRead = async () => {
+  if (!supabase) return null;
+  const userId = await getRequiredUserId();
+  const snapshot = await syncPendingChanges();
+  if (getOutbox().some((item) => item.userId === userId)) {
+    throw new Error(snapshot.lastError ?? 'Some changes are still waiting to sync');
+  }
+  return userId;
+};
+
+const noteCloudReadSuccess = () => emitSyncSnapshot({
+  lastSyncedAt: new Date().toISOString(),
+});
+
+const noteCloudReadFailure = (error: unknown) => emitSyncSnapshot({ lastError: errorMessage(error) });
+
 export const getTransactions = async (): Promise<Transaction[]> => {
-  if (supabase) {
+  const userId = supabase ? await getRequiredUserId() : null;
+  const local = sortTransactions(readLocal<Transaction[]>(STORAGE_KEY, userId, []));
+  if (!supabase) return local;
+
+  try {
+    await prepareCloudRead();
     const { data, error } = await supabase
       .from('transactions')
       .select('*')
+      .eq('user_id', userId)
       .order('date', { ascending: false })
       .order('created_at', { ascending: false });
-    if (!error && data) return sortTransactions(data as Transaction[]);
-  }
-  
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) return sortTransactions(MOCK_DATA_IF_EMPTY as Transaction[]);
-    return sortTransactions(JSON.parse(stored));
-  } catch (e) {
-    return [];
+    if (error) throw error;
+    const remote = sortTransactions((data ?? []).map((row) => stripOwner(row as Transaction & { user_id?: string })));
+    if (remote.length === 0 && local.length > 0) {
+      const migrated = await migrateLegacyRowsIfNeeded(STORAGE_KEY, 'transactions', userId, local);
+      if (migrated) return sortTransactions(migrated);
+    }
+    finishLegacyAdoption(STORAGE_KEY, userId);
+    writeLocal(STORAGE_KEY, userId, remote);
+    noteCloudReadSuccess();
+    return remote;
+  } catch (error) {
+    noteCloudReadFailure(error);
+    return local;
   }
 };
 
 export const saveTransaction = async (transaction: Transaction): Promise<void> => {
+  const userId = supabase ? await getRequiredUserId() : null;
   const record: Transaction = {
     ...transaction,
     created_at: transaction.created_at ?? new Date().toISOString(),
   };
-
-  if (supabase) {
-    await supabase.from('transactions').upsert(record);
-  }
-  const current = await getTransactionsLocal();
-  const updated = [record, ...current.filter(t => t.id !== record.id)];
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  const current = readLocal<Transaction[]>(STORAGE_KEY, userId, []);
+  writeLocal(STORAGE_KEY, userId, sortTransactions([record, ...current.filter((item) => item.id !== record.id)]));
+  if (userId) await syncMutation({ userId, table: 'transactions', action: 'upsert', recordId: record.id, record: { ...record } });
 };
 
 export const deleteTransaction = async (id: string): Promise<void> => {
-  if (supabase) {
-    await supabase.from('transactions').delete().eq('id', id);
-  }
-  const current = await getTransactionsLocal();
-  const updated = current.filter(t => t.id !== id);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  const userId = supabase ? await getRequiredUserId() : null;
+  const current = readLocal<Transaction[]>(STORAGE_KEY, userId, []);
+  writeLocal(STORAGE_KEY, userId, current.filter((item) => item.id !== id));
+  if (userId) await syncMutation({ userId, table: 'transactions', action: 'delete', recordId: id });
 };
 
-const getTransactionsLocal = async (): Promise<Transaction[]> => {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  return stored ? JSON.parse(stored) : [];
-};
+const recurringToRow = (recurring: RecurringTransaction): Record<string, unknown> => ({
+  id: recurring.id,
+  frequency: recurring.frequency,
+  next_due: recurring.nextDue,
+  anchor_day: recurring.anchorDay ?? null,
+  transaction_template: recurring.transactionTemplate,
+});
 
-// --- Recurring Transactions ---
+const recurringFromRow = (row: Record<string, unknown>): RecurringTransaction => ({
+  id: String(row.id),
+  frequency: row.frequency as RecurringTransaction['frequency'],
+  nextDue: String(row.next_due),
+  anchorDay: row.anchor_day === null || row.anchor_day === undefined ? undefined : Number(row.anchor_day),
+  transactionTemplate: row.transaction_template as RecurringTransaction['transactionTemplate'],
+});
 
 export const getRecurringTransactions = async (): Promise<RecurringTransaction[]> => {
-  const stored = localStorage.getItem(RECURRING_KEY);
-  return stored ? JSON.parse(stored) : [];
+  const userId = supabase ? await getRequiredUserId() : null;
+  const local = readLocal<RecurringTransaction[]>(RECURRING_KEY, userId, []);
+  if (!supabase) return local;
+
+  try {
+    await prepareCloudRead();
+    const { data, error } = await supabase
+      .from('recurring_transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('next_due', { ascending: true });
+    if (error) throw error;
+    const remote = (data ?? []).map((row) => recurringFromRow(row as Record<string, unknown>));
+    if (remote.length === 0 && local.length > 0) {
+      const migrated = await migrateLegacyRowsIfNeeded(RECURRING_KEY, 'recurring_transactions', userId, local, recurringToRow);
+      if (migrated) return migrated;
+    }
+    finishLegacyAdoption(RECURRING_KEY, userId);
+    writeLocal(RECURRING_KEY, userId, remote);
+    noteCloudReadSuccess();
+    return remote;
+  } catch (error) {
+    noteCloudReadFailure(error);
+    return local;
+  }
 };
 
 export const saveRecurringTransaction = async (recurring: RecurringTransaction): Promise<void> => {
-  const current = await getRecurringTransactions();
-  const updated = [recurring, ...current.filter(r => r.id !== recurring.id)];
-  localStorage.setItem(RECURRING_KEY, JSON.stringify(updated));
+  const userId = supabase ? await getRequiredUserId() : null;
+  const current = readLocal<RecurringTransaction[]>(RECURRING_KEY, userId, []);
+  writeLocal(RECURRING_KEY, userId, [recurring, ...current.filter((item) => item.id !== recurring.id)]);
+  if (userId) {
+    await syncMutation({
+      userId,
+      table: 'recurring_transactions',
+      action: 'upsert',
+      recordId: recurring.id,
+      record: recurringToRow(recurring),
+    });
+  }
+};
+
+export const deleteRecurringTransaction = async (id: string): Promise<void> => {
+  const userId = supabase ? await getRequiredUserId() : null;
+  const current = readLocal<RecurringTransaction[]>(RECURRING_KEY, userId, []);
+  writeLocal(RECURRING_KEY, userId, current.filter((item) => item.id !== id));
+  if (userId) await syncMutation({ userId, table: 'recurring_transactions', action: 'delete', recordId: id });
 };
 
 export const processRecurringTransactions = async (): Promise<Transaction[]> => {
   const recurringRules = await getRecurringTransactions();
   const newTransactions: Transaction[] = [];
   const now = new Date();
-  now.setHours(0, 0, 0, 0); // Normalize today
+  now.setHours(23, 59, 59, 999);
 
-  let updatedRules = recurringRules.map(rule => {
+  for (const rule of recurringRules) {
     let nextDue = new Date(rule.nextDue);
+    if (Number.isNaN(nextDue.getTime())) continue;
+    const anchorDay = rule.anchorDay ?? nextDue.getDate();
+    const ruleTransactions: Transaction[] = [];
     let modified = false;
 
-    // While the next due date is today or in the past
     while (nextDue <= now) {
       modified = true;
-      // Create the transaction
-      const newTx: Transaction = {
-        id: crypto.randomUUID(),
-        date: nextDue.toISOString(),
-        ...rule.transactionTemplate
+      const occurrenceDate = nextDue.toISOString();
+      const transaction: Transaction = {
+        id: await deterministicUuid(`smartspend:${rule.id}:${occurrenceDate}`),
+        date: occurrenceDate,
+        created_at: new Date().toISOString(),
+        ...rule.transactionTemplate,
       };
-      newTransactions.push(newTx);
-
-      // Advance the date
-      if (rule.frequency === 'monthly') {
-        nextDue.setMonth(nextDue.getMonth() + 1);
-      } else {
-        nextDue.setDate(nextDue.getDate() + 7);
-      }
+      ruleTransactions.push(transaction);
+      newTransactions.push(transaction);
+      nextDue = getNextRecurringDate(nextDue, rule.frequency, anchorDay);
     }
 
-    return { ...rule, nextDue: nextDue.toISOString() };
-  });
-
-  // Save generated transactions
-  for (const tx of newTransactions) {
-    await saveTransaction(tx);
-  }
-
-  // Save updated rules (next due dates)
-  if (newTransactions.length > 0) {
-     localStorage.setItem(RECURRING_KEY, JSON.stringify(updatedRules));
+    if (!modified) continue;
+    for (const transaction of ruleTransactions) {
+      await saveTransaction(transaction);
+    }
+    await saveRecurringTransaction({ ...rule, anchorDay, nextDue: nextDue.toISOString() });
   }
 
   return newTransactions;
 };
 
-// --- Debts ---
-
 export const getDebts = async (): Promise<Debt[]> => {
-  if (supabase) {
-    const { data, error } = await supabase.from('debts').select('*');
-    if (!error && data) return data as Debt[];
-  }
+  const userId = supabase ? await getRequiredUserId() : null;
+  const local = readLocal<Debt[]>(DEBT_STORAGE_KEY, userId, []);
+  if (!supabase) return local;
+
   try {
-    const stored = localStorage.getItem(DEBT_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : MOCK_DEBTS_IF_EMPTY;
-  } catch (e) {
-    return [];
+    await prepareCloudRead();
+    const { data, error } = await supabase.from('debts').select('*').eq('user_id', userId);
+    if (error) throw error;
+    const remote = (data ?? []).map((row) => stripOwner(row as Debt & { user_id?: string }));
+    if (remote.length === 0 && local.length > 0) {
+      const migrated = await migrateLegacyRowsIfNeeded(DEBT_STORAGE_KEY, 'debts', userId, local);
+      if (migrated) return migrated;
+    }
+    finishLegacyAdoption(DEBT_STORAGE_KEY, userId);
+    writeLocal(DEBT_STORAGE_KEY, userId, remote);
+    noteCloudReadSuccess();
+    return remote;
+  } catch (error) {
+    noteCloudReadFailure(error);
+    return local;
   }
 };
 
 export const saveDebt = async (debt: Debt): Promise<void> => {
-  if (supabase) {
-    await supabase.from('debts').upsert(debt);
-  }
-  const stored = localStorage.getItem(DEBT_STORAGE_KEY);
-  const localDebts: Debt[] = stored ? JSON.parse(stored) : MOCK_DEBTS_IF_EMPTY;
-  
-  const updated = [debt, ...localDebts.filter(d => d.id !== debt.id)];
-  localStorage.setItem(DEBT_STORAGE_KEY, JSON.stringify(updated));
+  const userId = supabase ? await getRequiredUserId() : null;
+  const current = readLocal<Debt[]>(DEBT_STORAGE_KEY, userId, []);
+  writeLocal(DEBT_STORAGE_KEY, userId, [debt, ...current.filter((item) => item.id !== debt.id)]);
+  if (userId) await syncMutation({ userId, table: 'debts', action: 'upsert', recordId: debt.id, record: { ...debt } });
 };
 
 export const deleteDebt = async (id: string): Promise<void> => {
-  if (supabase) {
-    await supabase.from('debts').delete().eq('id', id);
-  }
-  const stored = localStorage.getItem(DEBT_STORAGE_KEY);
-  const localDebts: Debt[] = stored ? JSON.parse(stored) : [];
-  const updated = localDebts.filter(d => d.id !== id);
-  localStorage.setItem(DEBT_STORAGE_KEY, JSON.stringify(updated));
+  const userId = supabase ? await getRequiredUserId() : null;
+  const current = readLocal<Debt[]>(DEBT_STORAGE_KEY, userId, []);
+  writeLocal(DEBT_STORAGE_KEY, userId, current.filter((item) => item.id !== id));
+  if (userId) await syncMutation({ userId, table: 'debts', action: 'delete', recordId: id });
 };
 
-// --- Goals ---
-
 export const getGoals = async (): Promise<Goal[]> => {
-  if (supabase) {
-    const { data, error } = await supabase.from('goals').select('*');
-    if (!error && data) return data as Goal[];
-  }
+  const userId = supabase ? await getRequiredUserId() : null;
+  const local = readLocal<Goal[]>(GOAL_STORAGE_KEY, userId, []);
+  if (!supabase) return local;
+
   try {
-    const stored = localStorage.getItem(GOAL_STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch (e) {
-    return [];
+    await prepareCloudRead();
+    const { data, error } = await supabase.from('goals').select('*').eq('user_id', userId);
+    if (error) throw error;
+    const remote = (data ?? []).map((row) => stripOwner(row as Goal & { user_id?: string }));
+    if (remote.length === 0 && local.length > 0) {
+      const migrated = await migrateLegacyRowsIfNeeded(GOAL_STORAGE_KEY, 'goals', userId, local);
+      if (migrated) return migrated;
+    }
+    finishLegacyAdoption(GOAL_STORAGE_KEY, userId);
+    writeLocal(GOAL_STORAGE_KEY, userId, remote);
+    noteCloudReadSuccess();
+    return remote;
+  } catch (error) {
+    noteCloudReadFailure(error);
+    return local;
   }
 };
 
 export const saveGoal = async (goal: Goal): Promise<void> => {
-  if (supabase) {
-    await supabase.from('goals').upsert(goal);
-  }
-  const stored = localStorage.getItem(GOAL_STORAGE_KEY);
-  const localGoals: Goal[] = stored ? JSON.parse(stored) : [];
-  const updated = [goal, ...localGoals.filter(g => g.id !== goal.id)];
-  localStorage.setItem(GOAL_STORAGE_KEY, JSON.stringify(updated));
+  const userId = supabase ? await getRequiredUserId() : null;
+  const current = readLocal<Goal[]>(GOAL_STORAGE_KEY, userId, []);
+  writeLocal(GOAL_STORAGE_KEY, userId, [goal, ...current.filter((item) => item.id !== goal.id)]);
+  if (userId) await syncMutation({ userId, table: 'goals', action: 'upsert', recordId: goal.id, record: { ...goal } });
 };
 
 export const deleteGoal = async (id: string): Promise<void> => {
-  if (supabase) {
-    await supabase.from('goals').delete().eq('id', id);
-  }
-  const stored = localStorage.getItem(GOAL_STORAGE_KEY);
-  const localGoals: Goal[] = stored ? JSON.parse(stored) : [];
-  const updated = localGoals.filter(g => g.id !== id);
-  localStorage.setItem(GOAL_STORAGE_KEY, JSON.stringify(updated));
+  const userId = supabase ? await getRequiredUserId() : null;
+  const current = readLocal<Goal[]>(GOAL_STORAGE_KEY, userId, []);
+  writeLocal(GOAL_STORAGE_KEY, userId, current.filter((item) => item.id !== id));
+  if (userId) await syncMutation({ userId, table: 'goals', action: 'delete', recordId: id });
+};
+
+export const clearLocalFinancialData = (userId: string) => {
+  [STORAGE_KEY, DEBT_STORAGE_KEY, GOAL_STORAGE_KEY, RECURRING_KEY]
+    .forEach((key) => localStorage.removeItem(scopedKey(key, userId)));
+  const remaining = getOutbox().filter((item) => item.userId !== userId);
+  localStorage.setItem(OUTBOX_KEY, JSON.stringify(remaining));
+  emitSyncSnapshot({ lastError: null, lastSyncedAt: null });
 };
