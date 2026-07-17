@@ -1,19 +1,22 @@
 import React, { useState } from 'react';
 import { Goal } from '../types';
-import { Target, TrendingUp } from 'lucide-react';
+import { Target, Trash2, TrendingUp } from 'lucide-react';
+import { GOAL_ICON_OPTIONS, GoalIcon, normalizeGoalIcon } from './ui/GoalIcon';
 
 interface GoalFormProps {
   onSave: (goal: Omit<Goal, 'id'>, existingId?: string) => void | Promise<void>;
   onCancel: () => void;
   goal?: Goal;
+  onDelete?: () => void;
 }
 
-export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal }) => {
+export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal, onDelete }) => {
   const [name, setName] = useState(goal?.name ?? '');
   const [targetAmount, setTargetAmount] = useState(goal ? goal.targetAmount.toString() : '');
   const [currentAmount, setCurrentAmount] = useState(goal ? goal.currentAmount.toString() : '');
   const [monthlyContribution, setMonthlyContribution] = useState(goal?.monthlyContribution?.toString() ?? '');
   const [deadline, setDeadline] = useState(goal?.deadline ? goal.deadline.split('T')[0] : '');
+  const [icon, setIcon] = useState(normalizeGoalIcon(goal?.icon));
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -37,7 +40,7 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal }) =>
       targetAmount: numericTarget,
       currentAmount: numericCurrent,
       deadline,
-      icon: goal?.icon ?? '🎯',
+      icon,
       monthlyContribution: numericMonthly,
       startDate: goal?.startDate ?? new Date().toISOString()
     }, goal?.id);
@@ -57,6 +60,24 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal }) =>
             placeholder="e.g. Europe Trip"
             className="w-full pl-10 h-12 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500 text-zinc-200 outline-none text-sm"
           />
+        </div>
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">Icon</label>
+        <div className="grid grid-cols-4 gap-2">
+          {GOAL_ICON_OPTIONS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => setIcon(option.id)}
+              aria-label={`${option.label} goal icon`}
+              aria-pressed={icon === option.id}
+              className={`flex min-h-11 flex-col items-center justify-center gap-1 rounded-lg border text-[9px] font-semibold transition ${icon === option.id ? 'border-zinc-300 bg-zinc-700 text-white' : 'border-zinc-700 bg-zinc-800 text-zinc-500 hover:border-zinc-600'}`}
+            >
+              <GoalIcon icon={option.id} size={15} /> {option.label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -122,6 +143,11 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal }) =>
           {goal ? 'Update' : 'Create'}
         </button>
       </div>
+      {goal && onDelete && (
+        <button type="button" onClick={onDelete} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10 hover:text-rose-300">
+          <Trash2 size={14} /> Delete goal
+        </button>
+      )}
     </form>
   );
 };

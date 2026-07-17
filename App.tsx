@@ -6,7 +6,7 @@ import {
   getTransactions, saveTransaction, deleteTransaction, 
   getDebts, saveDebt, deleteDebt,
   getGoals, saveGoal, deleteGoal,
-  getRecurringTransactions, deleteRecurringTransaction,
+  getRecurringTransactions, saveRecurringTransaction, deleteRecurringTransaction,
   processRecurringTransactions, syncPendingChanges,
   subscribeToSyncState, getSyncSnapshot, clearLocalFinancialData,
   SyncSnapshot,
@@ -19,9 +19,9 @@ import { GoalForm } from './components/GoalForm';
 import { AuthScreen } from './components/AuthScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { Modal } from './components/ui/Modal';
-import { addMonthsClamped } from './utils/date';
+import { addMonthsClamped, localDateInputToIso } from './utils/date';
 import { supabase } from './services/supabaseClient';
-import { LayoutDashboard, List as ListIcon, Plus, ArrowRightLeft, Target, DollarSign, TrendingDown, TrendingUp, ShieldAlert, Landmark, Settings, Cloud, CloudOff, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, List as ListIcon, Plus, ArrowRightLeft, Target, DollarSign, Landmark, Settings, Cloud, CloudOff, RefreshCw, MoreHorizontal, Download, ChevronRight } from 'lucide-react';
 
 const Dashboard = React.lazy(() => import('./components/Dashboard').then(m => ({ default: m.Dashboard })));
 const ExpenseList = React.lazy(() => import('./components/ExpenseList').then(m => ({ default: m.ExpenseList })));
@@ -43,12 +43,15 @@ const App: React.FC = () => {
   const [habitReminder, setHabitReminder] = useState<HabitReminderCandidate | null>(null);
   const [habitStateById, setHabitStateById] = useState<Record<string, HabitReminderState>>({});
   const [habitPatterns, setHabitPatternsState] = useState<ReturnType<typeof buildHabitPatterns>>([]);
+  const [remindersEnabled, setRemindersEnabled] = useState(true);
   const [expensePrefill, setExpensePrefill] = useState<Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>> | null>(null);
+  const [quickAddNotice, setQuickAddNotice] = useState<Transaction | null>(null);
   const habitsInitialized = useRef(false);
   const dataLoadInFlight = useRef<Promise<void> | null>(null);
+  const quickAddTimer = useRef<number | null>(null);
   
   // Modal states
-  const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false);
+  const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
@@ -74,6 +77,12 @@ const App: React.FC = () => {
     return dt.toLocaleDateString('en-CA');
   };
 
+  const reminderSettingKey = `smartspend_habit_reminders_enabled_v1:${session?.user.id ?? 'local'}`;
+
+  useEffect(() => {
+    setRemindersEnabled(localStorage.getItem(reminderSettingKey) !== 'false');
+  }, [reminderSettingKey]);
+
   const openTransactionModal = (
     prefill: Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>> | null = null
   ) => {
@@ -87,6 +96,29 @@ const App: React.FC = () => {
     setEditingTransaction(null);
     setExpensePrefill(null);
   };
+
+  useEffect(() => () => {
+    if (quickAddTimer.current !== null) window.clearTimeout(quickAddTimer.current);
+  }, []);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (!event.altKey || event.ctrlKey || event.metaKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+      if (isExpenseModalOpen || isDebtModalOpen || isGoalModalOpen || isPayDebtModalOpen || isAddFundsModalOpen) return;
+      if (event.key.toLocaleLowerCase() === 'e') {
+        event.preventDefault();
+        openTransactionModal({ type: 'expense' });
+      }
+      if (event.key.toLocaleLowerCase() === 'i') {
+        event.preventDefault();
+        openTransactionModal({ type: 'income' });
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [isAddFundsModalOpen, isDebtModalOpen, isExpenseModalOpen, isGoalModalOpen, isPayDebtModalOpen]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -201,28 +233,35 @@ const App: React.FC = () => {
   // In-app reminders (reliable) – run on open / foreground.
   useEffect(() => {
     if (isLoading) return;
+    if (!remindersEnabled) return;
 
     const maybeShow = async () => {
       if (habitReminder) return;
       if (!habitPatterns.length) return;
-      if (isCommandMenuOpen || isExpenseModalOpen || isDebtModalOpen || isGoalModalOpen || isAddFundsModalOpen || isPayDebtModalOpen) return;
+      if (isMoreMenuOpen || isExpenseModalOpen || isDebtModalOpen || isGoalModalOpen || isAddFundsModalOpen || isPayDebtModalOpen) return;
 
       const today = todayLocal();
-      const globalKey = 'smartspend_habit_global_state_v1';
-      const global = (() => {
-        try {
-          return JSON.parse(localStorage.getItem(globalKey) || 'null') as { date: string; count: number } | null;
-        } catch {
-          return null;
-        }
-      })();
-      if (global?.date === today && global.count >= 2) return;
+      // One reminder per day across all inferred habits. Reminder state is
+      // synced through Supabase, unlike the former device-only daily counter.
+      if (Object.keys(habitStateById).some((habitId) => habitStateById[habitId]?.lastRemindedDate === today)) return;
 
       const candidate = findDueHabitReminder(habitPatterns, transactions, habitStateById);
       if (!candidate) return;
 
-      const next = { date: today, count: (global?.date === today ? global.count : 0) + 1 };
-      localStorage.setItem(globalKey, JSON.stringify(next));
+      // Mark it when shown so changing focus or reloading cannot immediately
+      // show the same reminder again.
+      const existing = habitStateById[candidate.habitId] ?? {
+        habitId: candidate.habitId,
+        lastRemindedDate: null,
+        snoozedUntil: null,
+        dismissCountRecent: 0,
+      };
+      const nextState = {
+        ...habitStateById,
+        [candidate.habitId]: { ...existing, lastRemindedDate: today },
+      };
+      setHabitStateById(nextState);
+      void saveHabitReminderState(nextState);
       setHabitReminder(candidate);
     };
 
@@ -244,12 +283,13 @@ const App: React.FC = () => {
     habitReminder,
     habitStateById,
     isAddFundsModalOpen,
-    isCommandMenuOpen,
+    isMoreMenuOpen,
     isDebtModalOpen,
     isExpenseModalOpen,
     isGoalModalOpen,
     isLoading,
     isPayDebtModalOpen,
+    remindersEnabled,
     transactions,
   ]);
 
@@ -267,6 +307,55 @@ const App: React.FC = () => {
     setEditingTransaction(null);
     setExpensePrefill(null);
     setIsExpenseModalOpen(false);
+  };
+
+  const handleQuickAdd = async (prefill: Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>>) => {
+    if (!prefill.amount || !prefill.description || !prefill.category) return;
+    let date = new Date().toISOString();
+    if (prefill.date) {
+      try {
+        date = prefill.date.includes('T') ? prefill.date : localDateInputToIso(prefill.date);
+      } catch {
+        date = new Date().toISOString();
+      }
+    }
+    const transaction: Transaction = {
+      id: crypto.randomUUID(),
+      type: prefill.type ?? 'expense',
+      amount: prefill.amount,
+      description: prefill.description,
+      category: prefill.category,
+      date,
+      created_at: new Date().toISOString(),
+    };
+    setTransactions((previous) => [transaction, ...previous]);
+    try {
+      await saveTransaction(transaction);
+      setQuickAddNotice(transaction);
+      if (quickAddTimer.current !== null) window.clearTimeout(quickAddTimer.current);
+      quickAddTimer.current = window.setTimeout(() => {
+        setQuickAddNotice(null);
+        quickAddTimer.current = null;
+      }, 5000);
+    } catch (error) {
+      setTransactions((previous) => previous.filter((item) => item.id !== transaction.id));
+      setLoadError(error instanceof Error ? error.message : 'Could not add the quick entry.');
+    }
+  };
+
+  const handleUndoQuickAdd = async () => {
+    const transaction = quickAddNotice;
+    if (!transaction) return;
+    setQuickAddNotice(null);
+    if (quickAddTimer.current !== null) window.clearTimeout(quickAddTimer.current);
+    quickAddTimer.current = null;
+    setTransactions((previous) => previous.filter((item) => item.id !== transaction.id));
+    try {
+      await deleteTransaction(transaction.id);
+    } catch (error) {
+      setTransactions((previous) => [transaction, ...previous]);
+      setLoadError(error instanceof Error ? error.message : 'Could not undo the quick entry.');
+    }
   };
 
   const handleDeleteTransaction = (id: string) => {
@@ -320,7 +409,6 @@ const App: React.FC = () => {
         const principalPayment = Math.min(amount, debt.amount);
         const monthlyRate = (debt.interestRate ?? 0) / 100 / 12;
         const interestDue = monthlyRate > 0 ? Math.round(debt.amount * monthlyRate) : 0;
-        const totalCharge = principalPayment + interestDue;
         const newBalance = Math.max(0, debt.amount - principalPayment);
         const isPaidOff = newBalance === 0;
         const currentDue = new Date(debt.dueDate || new Date().toISOString());
@@ -330,13 +418,16 @@ const App: React.FC = () => {
         setDebts(prev => prev.map(d => d.id === selectedDebtId ? updatedDebt : d));
         await saveDebt(updatedDebt);
 
-        if (debt.type === 'payable') {
+        // Principal repays purchases or borrowed money already represented by
+        // the debt balance; recording it as another expense double-counts it.
+        // Interest is the only new cost created by this payment.
+        if (debt.type === 'payable' && interestDue > 0) {
           const newTx: Transaction = {
              id: crypto.randomUUID(),
-             amount: totalCharge,
+             amount: interestDue,
              category: Category.Debt,
              date: new Date().toISOString(),
-             description: `Debt Payment: ${debt.person} (principal ¥${principalPayment.toLocaleString()} + interest ¥${interestDue.toLocaleString()})`,
+             description: `Interest: ${debt.person}`,
              type: 'expense'
           };
           setTransactions(prev => [newTx, ...prev]);
@@ -409,17 +500,6 @@ const App: React.FC = () => {
         const updatedGoal = { ...goal, currentAmount: goal.currentAmount + amount };
         setGoals(prev => prev.map(g => g.id === selectedGoalId ? updatedGoal : g));
         await saveGoal(updatedGoal);
-
-        const newTx: Transaction = {
-          id: crypto.randomUUID(),
-          amount: amount,
-          category: Category.Savings,
-          date: new Date().toISOString(),
-          description: `Goal Deposit: ${goal.name}`,
-          type: 'expense'
-        };
-        setTransactions(prev => [newTx, ...prev]);
-        await saveTransaction(newTx);
       }
       
       setIsAddFundsModalOpen(false);
@@ -456,15 +536,56 @@ const App: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  const handleImport = async (file: File): Promise<string> => {
+    const raw = await file.text();
+    let payload: unknown;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      throw new Error('This is not a valid SmartSpend JSON backup.');
+    }
+    if (!payload || typeof payload !== 'object') throw new Error('Backup content is missing.');
+    const backup = payload as Record<string, unknown>;
+    const importedTransactions = Array.isArray(backup.transactions) ? backup.transactions as Transaction[] : [];
+    const importedDebts = Array.isArray(backup.debts) ? backup.debts as Debt[] : [];
+    const importedGoals = Array.isArray(backup.goals) ? backup.goals as Goal[] : [];
+    const importedRecurring = Array.isArray(backup.recurringTransactions) ? backup.recurringTransactions as RecurringTransaction[] : [];
+    const allRows = [...importedTransactions, ...importedDebts, ...importedGoals, ...importedRecurring];
+    if (allRows.length === 0) throw new Error('No SmartSpend records were found in this backup.');
+    if (allRows.some((row) => !row || typeof row !== 'object' || typeof row.id !== 'string' || !row.id)) {
+      throw new Error('Some backup records are invalid or missing an ID.');
+    }
+
+    for (const transaction of importedTransactions) await saveTransaction(transaction);
+    for (const debt of importedDebts) await saveDebt(debt);
+    for (const goal of importedGoals) await saveGoal(goal);
+    for (const recurring of importedRecurring) await saveRecurringTransaction(recurring);
+    await loadData(false);
+    return `Merged ${allRows.length} record${allRows.length === 1 ? '' : 's'} from the backup.`;
+  };
+
+  const handleToggleReminders = () => {
+    const next = !remindersEnabled;
+    setRemindersEnabled(next);
+    localStorage.setItem(reminderSettingKey, String(next));
+    if (!next) setHabitReminder(null);
+  };
+
+  const handleToggleHabit = (habitId: string) => {
+    setHabitPatternsState((previous) => {
+      const updated = previous.map((pattern) => pattern.habitId === habitId ? { ...pattern, active: !pattern.active } : pattern);
+      void saveHabitPatterns(updated);
+      return updated;
+    });
+  };
+
   const handleFabClick = () => {
-    if (currentView === 'dashboard') {
-      setIsCommandMenuOpen(true);
-    } else if (currentView === 'debts') {
+    if (currentView === 'debts') {
       setIsDebtModalOpen(true);
     } else if (currentView === 'goals') {
       setIsGoalModalOpen(true);
     } else {
-      openTransactionModal();
+      openTransactionModal({ type: 'expense' });
     }
   };
 
@@ -479,7 +600,7 @@ const App: React.FC = () => {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-black flex justify-center font-sans">
-        <div className="w-full max-w-md px-4 py-6 space-y-4 min-h-screen">
+        <div className="w-full max-w-5xl px-4 sm:px-6 py-6 space-y-4 min-h-screen">
           <div className="h-10 w-32 bg-zinc-800/70 rounded-full animate-pulse-slow" />
           <div className="bg-zinc-900/60 border border-zinc-800/70 rounded-xl p-5 space-y-4 backdrop-blur-sm">
             <div className="h-4 w-24 bg-zinc-800/70 rounded animate-pulse-slow" />
@@ -515,7 +636,7 @@ const App: React.FC = () => {
 
   return (
     <div
-      className="min-h-screen max-w-md mx-auto shadow-2xl shadow-zinc-900 relative overflow-hidden text-zinc-200 border-x border-zinc-900 font-sans"
+      className="min-h-screen max-w-5xl mx-auto shadow-2xl shadow-zinc-900 relative overflow-hidden text-zinc-200 border-x border-zinc-900 font-sans"
       style={{
         backgroundColor: '#000',
         backgroundImage:
@@ -530,25 +651,35 @@ const App: React.FC = () => {
           </div>
           <h1 className="text-sm font-bold tracking-wide text-white">SmartSpend</h1>
         </div>
-        <button
-          onClick={() => setIsSettingsModalOpen(true)}
-          className="relative h-9 px-3 rounded-full border border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white flex items-center gap-2 transition-colors"
-          aria-label="Open sync and settings"
-        >
-          {syncState.isSyncing ? (
-            <RefreshCw size={14} className="animate-spin" />
-          ) : syncState.lastError || syncState.pendingCount > 0 ? (
-            <CloudOff size={14} className="text-amber-400" />
-          ) : (
-            <Cloud size={14} className={supabase ? 'text-emerald-400' : 'text-zinc-500'} />
-          )}
-          <Settings size={13} />
-          {syncState.pendingCount > 0 && (
-            <span className="absolute -right-1 -top-1 min-w-4 h-4 px-1 rounded-full bg-amber-400 text-black text-[9px] font-bold flex items-center justify-center">
-              {syncState.pendingCount}
-            </span>
-          )}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleFabClick}
+            aria-label={currentView === 'debts' ? 'Add debt' : currentView === 'goals' ? 'Add goal' : 'Add transaction'}
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-700 bg-zinc-100 text-black transition hover:bg-white active:scale-95"
+          >
+            <Plus size={18} strokeWidth={2.5} />
+          </button>
+          <button
+            onClick={() => setIsSettingsModalOpen(true)}
+            className="relative h-9 px-3 rounded-full border border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white flex items-center gap-2 transition-colors"
+            aria-label="Open sync and settings"
+          >
+            {syncState.isSyncing ? (
+              <RefreshCw size={14} className="animate-spin" />
+            ) : syncState.lastError || syncState.pendingCount > 0 ? (
+              <CloudOff size={14} className="text-amber-400" />
+            ) : (
+              <Cloud size={14} className={supabase ? 'text-emerald-400' : 'text-zinc-500'} />
+            )}
+            <Settings size={13} />
+            {syncState.pendingCount > 0 && (
+              <span className="absolute -right-1 -top-1 min-w-4 h-4 px-1 rounded-full bg-amber-400 text-black text-[9px] font-bold flex items-center justify-center">
+                {syncState.pendingCount}
+              </span>
+            )}
+          </button>
+        </div>
       </header>
 
       {(loadError || syncState.lastError) && (
@@ -563,83 +694,134 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <main className="p-4 min-h-[calc(100vh-140px)] relative z-10">
+      <main className="p-4 sm:p-6 min-h-[calc(100vh-140px)] relative z-10">
         <Suspense fallback={<div className="text-sm text-zinc-500">Loading...</div>}>
-          {currentView === 'dashboard' && <Dashboard transactions={transactions} debts={debts} goals={goals} />}
-        {currentView === 'list' && <ExpenseList expenses={transactions} onDelete={handleDeleteTransaction} onEdit={(tx) => { setExpensePrefill(null); setEditingTransaction(tx); setIsExpenseModalOpen(true); }} />}
-        {currentView === 'debts' && <DebtList debts={debts} onDelete={handleDeleteDebt} onToggleStatus={handleOpenPayDebt} onEdit={(d) => { setEditingDebt(d); setIsDebtModalOpen(true); }} />}
-        {currentView === 'goals' && <GoalList goals={goals} onDelete={handleDeleteGoal} onAddFundsClick={handleOpenAddFunds} onEdit={(g) => { setEditingGoal(g); setIsGoalModalOpen(true); }} />}
+          {currentView === 'dashboard' && (
+            <Dashboard
+              transactions={transactions}
+              debts={debts}
+              goals={goals}
+              recurringRules={recurringRules}
+              onQuickAdd={(prefill) => void handleQuickAdd(prefill)}
+              onOpenTransactions={() => setCurrentView('list')}
+              onOpenDebts={() => setCurrentView('debts')}
+              onPayDebt={handleOpenPayDebt}
+              onOpenGoals={() => setCurrentView('goals')}
+              onAddGoalFunds={handleOpenAddFunds}
+            />
+          )}
+        {currentView === 'list' && <ExpenseList expenses={transactions} onEdit={(tx) => { setExpensePrefill(null); setEditingTransaction(tx); setIsExpenseModalOpen(true); }} />}
+        {currentView === 'debts' && <DebtList debts={debts} onToggleStatus={handleOpenPayDebt} onEdit={(d) => { setEditingDebt(d); setIsDebtModalOpen(true); }} />}
+        {currentView === 'goals' && <GoalList goals={goals} onAddFundsClick={handleOpenAddFunds} onEdit={(g) => { setEditingGoal(g); setIsGoalModalOpen(true); }} />}
         </Suspense>
       </main>
 
-      {/* FAB - anchored to app container width */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-20 flex justify-center z-30">
-        <div className="w-full max-w-md px-4 flex justify-end">
-          <button
-            onClick={handleFabClick}
-            aria-label={currentView === 'dashboard' ? 'Open quick actions' : currentView === 'list' ? 'Add transaction' : currentView === 'debts' ? 'Add debt' : 'Add goal'}
-            className="pointer-events-auto bg-white text-black h-12 w-12 rounded-full shadow-xl shadow-zinc-900/50 transition-all active:scale-90 hover:scale-105 flex items-center justify-center border border-zinc-200"
-          >
-            <Plus size={24} strokeWidth={2.5} />
-          </button>
-        </div>
-      </div>
-
       {/* Bottom Nav - Black with White Active State */}
-      <nav className="fixed bottom-0 w-full max-w-md bg-black/90 border-t border-zinc-900 px-2 py-1 z-20 grid grid-cols-4 pb-safe backdrop-blur-lg">
+      <nav className="fixed bottom-0 left-1/2 z-20 grid w-full max-w-5xl -translate-x-1/2 grid-cols-4 border-x border-t border-zinc-900 bg-black/95 px-1 py-1 pb-safe backdrop-blur-lg">
         <button onClick={() => setCurrentView('dashboard')} className={`flex flex-col items-center justify-center p-2 rounded-lg transition-all active:bg-zinc-900 ${currentView === 'dashboard' ? 'text-white' : 'text-zinc-600'}`}>
           <LayoutDashboard size={20} strokeWidth={currentView === 'dashboard' ? 2.5 : 2} />
           <span className="text-[10px] mt-1 font-medium tracking-wide">Home</span>
         </button>
         <button onClick={() => setCurrentView('list')} className={`flex flex-col items-center justify-center p-2 rounded-lg transition-all active:bg-zinc-900 ${currentView === 'list' ? 'text-white' : 'text-zinc-600'}`}>
           <ListIcon size={20} strokeWidth={currentView === 'list' ? 2.5 : 2} />
-          <span className="text-[10px] mt-1 font-medium tracking-wide">List</span>
+          <span className="text-[10px] mt-1 font-medium tracking-wide">Transactions</span>
         </button>
         <button onClick={() => setCurrentView('debts')} className={`flex flex-col items-center justify-center p-2 rounded-lg transition-all active:bg-zinc-900 ${currentView === 'debts' ? 'text-white' : 'text-zinc-600'}`}>
           <ArrowRightLeft size={20} strokeWidth={currentView === 'debts' ? 2.5 : 2} />
-          <span className="text-[10px] mt-1 font-medium tracking-wide">Debt</span>
+          <span className="text-[10px] mt-1 font-medium tracking-wide">Debts</span>
         </button>
-        <button onClick={() => setCurrentView('goals')} className={`flex flex-col items-center justify-center p-2 rounded-lg transition-all active:bg-zinc-900 ${currentView === 'goals' ? 'text-white' : 'text-zinc-600'}`}>
-          <Target size={20} strokeWidth={currentView === 'goals' ? 2.5 : 2} />
-          <span className="text-[10px] mt-1 font-medium tracking-wide">Goal</span>
+        <button onClick={() => setIsMoreMenuOpen(true)} className={`flex flex-col items-center justify-center p-2 rounded-lg transition-all active:bg-zinc-900 ${currentView === 'goals' ? 'text-white' : 'text-zinc-600'}`}>
+          <MoreHorizontal size={20} strokeWidth={currentView === 'goals' ? 2.5 : 2} />
+          <span className="text-[10px] mt-1 font-medium tracking-wide">More</span>
         </button>
       </nav>
 
-      {/* Command Menu Modal */}
-      <Modal isOpen={isCommandMenuOpen} onClose={() => setIsCommandMenuOpen(false)} title="Quick Actions">
-        <div className="grid grid-cols-2 gap-3 pt-2">
-           <button onClick={() => { setIsCommandMenuOpen(false); openTransactionModal({ type: 'expense' }); }} className="flex flex-col items-center justify-center p-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-all active:scale-95 group">
-              <div className="bg-zinc-100 p-2.5 rounded-full text-black mb-2 group-hover:bg-white transition-colors"><TrendingDown size={18} /></div>
-              <span className="font-bold text-xs text-zinc-200 uppercase tracking-wide">Expense</span>
-           </button>
-           <button onClick={() => { setIsCommandMenuOpen(false); openTransactionModal({ type: 'income' }); }} className="flex flex-col items-center justify-center p-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-all active:scale-95 group">
-              <div className="bg-zinc-100 p-2.5 rounded-full text-black mb-2 group-hover:bg-white transition-colors"><TrendingUp size={18} /></div>
-              <span className="font-bold text-xs text-zinc-200 uppercase tracking-wide">Income</span>
-           </button>
-           <button onClick={() => { setIsCommandMenuOpen(false); setIsDebtModalOpen(true); }} className="flex flex-col items-center justify-center p-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-all active:scale-95 group">
-              <div className="bg-zinc-800 p-2.5 rounded-full text-zinc-400 mb-2 group-hover:text-white transition-colors"><ShieldAlert size={18} /></div>
-              <span className="font-bold text-xs text-zinc-400 uppercase tracking-wide">Debt</span>
-           </button>
-           <button onClick={() => { setIsCommandMenuOpen(false); setIsGoalModalOpen(true); }} className="flex flex-col items-center justify-center p-4 bg-zinc-900 border border-zinc-800 rounded-xl hover:bg-zinc-800 transition-all active:scale-95 group">
-              <div className="bg-zinc-800 p-2.5 rounded-full text-zinc-400 mb-2 group-hover:text-white transition-colors"><Target size={18} /></div>
-              <span className="font-bold text-xs text-zinc-400 uppercase tracking-wide">Goal</span>
-           </button>
+      {quickAddNotice && (
+        <div aria-live="polite" className="fixed bottom-24 left-1/2 z-40 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 shadow-2xl shadow-black/70">
+          <p className="min-w-0 truncate text-xs text-zinc-300">Added <strong className="text-white">{quickAddNotice.description} · ¥{quickAddNotice.amount.toLocaleString()}</strong></p>
+          <button type="button" onClick={() => void handleUndoQuickAdd()} className="min-h-9 shrink-0 rounded-lg px-2 text-xs font-bold uppercase tracking-wide text-emerald-300 hover:bg-emerald-400/10">Undo</button>
+        </div>
+      )}
+
+      <Modal isOpen={isMoreMenuOpen} onClose={() => setIsMoreMenuOpen(false)} title="More">
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => { setIsMoreMenuOpen(false); setCurrentView('goals'); }}
+            className="flex w-full items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-left transition hover:bg-zinc-800"
+          >
+            <div className="rounded-lg bg-zinc-800 p-2 text-zinc-300"><Target size={18} /></div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold text-zinc-200">Goals</p>
+              <p className="text-xs text-zinc-500">Optional savings targets when you are ready</p>
+            </div>
+            <ChevronRight size={17} className="text-zinc-600" />
+          </button>
+          <button
+            type="button"
+            onClick={() => { setIsMoreMenuOpen(false); setIsSettingsModalOpen(true); }}
+            className="flex w-full items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-left transition hover:bg-zinc-800"
+          >
+            <div className="rounded-lg bg-zinc-800 p-2 text-zinc-300"><Settings size={18} /></div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold text-zinc-200">Sync & settings</p>
+              <p className="text-xs text-zinc-500">Cloud status, recurring entries and account</p>
+            </div>
+            <ChevronRight size={17} className="text-zinc-600" />
+          </button>
+          <button
+            type="button"
+            onClick={() => { setIsMoreMenuOpen(false); handleExport(); }}
+            className="flex w-full items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-left transition hover:bg-zinc-800"
+          >
+            <div className="rounded-lg bg-zinc-800 p-2 text-zinc-300"><Download size={18} /></div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold text-zinc-200">Export backup</p>
+              <p className="text-xs text-zinc-500">Download a private JSON copy of your data</p>
+            </div>
+          </button>
         </div>
       </Modal>
 
-      <Modal isOpen={isExpenseModalOpen} onClose={closeTransactionModal} title={editingTransaction ? "Edit Transaction" : "Log Transaction"}>
+      <Modal isOpen={isExpenseModalOpen} onClose={closeTransactionModal} title={editingTransaction ? `Edit ${editingTransaction.type}` : `Add ${expensePrefill?.type ?? 'expense'}`}>
         <ExpenseForm
           transaction={editingTransaction ?? undefined}
           prefill={editingTransaction ? undefined : expensePrefill ?? undefined}
+          existingTransactions={transactions}
           onSave={handleSaveTransaction}
           onCancel={closeTransactionModal}
+          onDelete={editingTransaction ? () => {
+            const id = editingTransaction.id;
+            closeTransactionModal();
+            handleDeleteTransaction(id);
+          } : undefined}
         />
       </Modal>
       <Modal isOpen={isDebtModalOpen} onClose={() => { setIsDebtModalOpen(false); setEditingDebt(null); }} title={editingDebt ? "Edit Debt" : "Add Debt"}>
-        <DebtForm debt={editingDebt ?? undefined} onSave={handleSaveDebt} onCancel={() => { setIsDebtModalOpen(false); setEditingDebt(null); }} />
+        <DebtForm
+          debt={editingDebt ?? undefined}
+          onSave={handleSaveDebt}
+          onCancel={() => { setIsDebtModalOpen(false); setEditingDebt(null); }}
+          onDelete={editingDebt ? () => {
+            const id = editingDebt.id;
+            setIsDebtModalOpen(false);
+            setEditingDebt(null);
+            handleDeleteDebt(id);
+          } : undefined}
+        />
       </Modal>
       <Modal isOpen={isGoalModalOpen} onClose={() => { setIsGoalModalOpen(false); setEditingGoal(null); }} title={editingGoal ? "Edit Goal" : "New Goal"}>
-        <GoalForm goal={editingGoal ?? undefined} onSave={handleSaveGoal} onCancel={() => { setIsGoalModalOpen(false); setEditingGoal(null); }} />
+        <GoalForm
+          goal={editingGoal ?? undefined}
+          onSave={handleSaveGoal}
+          onCancel={() => { setIsGoalModalOpen(false); setEditingGoal(null); }}
+          onDelete={editingGoal ? () => {
+            const id = editingGoal.id;
+            setIsGoalModalOpen(false);
+            setEditingGoal(null);
+            handleDeleteGoal(id);
+          } : undefined}
+        />
       </Modal>
       
       <Modal isOpen={isAddFundsModalOpen} onClose={() => { setIsAddFundsModalOpen(false); setFundError(null); }} title="Add Funds">
@@ -670,7 +852,9 @@ const App: React.FC = () => {
             <div className="rounded-lg bg-zinc-950 border border-zinc-800 p-3 space-y-1.5 text-[11px]">
               <div className="flex justify-between text-zinc-500"><span>Outstanding balance</span><span>¥{selectedDebt.amount.toLocaleString()}</span></div>
               <div className="flex justify-between text-zinc-500"><span>Estimated monthly interest</span><span>¥{paymentInterestPreview.toLocaleString()}</span></div>
-              <div className="flex justify-between text-zinc-200 font-bold pt-1.5 border-t border-zinc-800"><span>Total expense recorded</span><span>¥{(paymentPrincipalPreview + paymentInterestPreview).toLocaleString()}</span></div>
+              <div className="flex justify-between text-zinc-500"><span>Total cash payment</span><span>¥{(paymentPrincipalPreview + paymentInterestPreview).toLocaleString()}</span></div>
+              <div className="flex justify-between text-zinc-200 font-bold pt-1.5 border-t border-zinc-800"><span>New expense recorded</span><span>¥{paymentInterestPreview.toLocaleString()}</span></div>
+              <p className="pt-1 text-[10px] text-zinc-600">Principal reduces the balance only, preventing purchases from being counted twice.</p>
             </div>
           )}
           <button type="submit" className="w-full h-12 bg-white hover:bg-zinc-200 text-black font-bold rounded-lg text-xs uppercase tracking-wider shadow-lg">Confirm Payment</button>
@@ -714,12 +898,17 @@ const App: React.FC = () => {
           email={session?.user.email ?? null}
           sync={syncState}
           recurringRules={recurringRules}
+          habitPatterns={habitPatterns}
+          remindersEnabled={remindersEnabled}
           onRetrySync={() => void loadData(false)}
           onDeleteRecurring={(id) => {
             setIsSettingsModalOpen(false);
             setPendingDelete({ type: 'recurring', id });
           }}
           onExport={handleExport}
+          onImport={handleImport}
+          onToggleReminders={handleToggleReminders}
+          onToggleHabit={handleToggleHabit}
           onSignOut={() => void handleSignOut()}
         />
       </Modal>
@@ -791,16 +980,18 @@ const App: React.FC = () => {
                     snoozedUntil: null,
                     dismissCountRecent: 0,
                   };
-                  const newCount = s.dismissCountRecent + 1;
-                  const snoozedUntil = newCount >= 2 ? addDaysLocal(today, 14) : s.snoozedUntil;
-                  const dismissCountRecent = newCount >= 2 ? 0 : newCount;
+                  const snoozeDays = habitReminder.intervalType === 'monthly'
+                    ? 27
+                    : habitReminder.intervalType === 'weekly'
+                      ? 6
+                      : 0;
                   const next = {
                     ...habitStateById,
                     [habitReminder.habitId]: {
                       ...s,
                       lastRemindedDate: today,
-                      snoozedUntil,
-                      dismissCountRecent,
+                      snoozedUntil: addDaysLocal(today, snoozeDays),
+                      dismissCountRecent: 0,
                     },
                   };
                   setHabitStateById(next);

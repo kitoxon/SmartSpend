@@ -1,7 +1,7 @@
 // Simple offline-first caching for the app shell and static assets.
 const APP_SHELL = ['/', '/index.html', '/manifest.json'];
-const STATIC_CACHE = 'smartspend-static-v2';
-const RUNTIME_CACHE = 'smartspend-runtime-v2';
+const STATIC_CACHE = 'smartspend-static-v3';
+const RUNTIME_CACHE = 'smartspend-runtime-v3';
 
 const offlineResponse = async () => {
   const cached = await caches.match('/index.html');
@@ -74,6 +74,11 @@ self.addEventListener('fetch', (event) => {
   }
 
   const url = new URL(request.url);
+  const isLocalDevelopment =
+    ['localhost', '127.0.0.1'].includes(url.hostname) &&
+    ['3000', '5173'].includes(url.port);
+  if (isLocalDevelopment) return;
+
   const sameOriginAsset =
     url.origin === self.location.origin &&
     (url.pathname.startsWith('/assets/') ||
@@ -82,8 +87,6 @@ self.addEventListener('fetch', (event) => {
   const cdnHosts = [
     'fonts.googleapis.com',
     'fonts.gstatic.com',
-    'cdn.tailwindcss.com',
-    'aistudiocdn.com',
   ];
   const isCDN = cdnHosts.includes(url.hostname);
 

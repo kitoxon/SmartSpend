@@ -32,6 +32,7 @@ export interface HabitReminderCandidate {
   category: Category;
   description: string;
   amount: number;
+  intervalType: Exclude<HabitIntervalType, 'unknown'>;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -268,7 +269,11 @@ export const findDueHabitReminder = (
   };
 
   const candidates = patterns
-    .filter((p) => p.active)
+    // An unknown interval is only a loose similarity cluster, not a schedule.
+    // Reminding from it makes ordinary or irregular purchases feel random.
+    .filter((p): p is HabitPattern & { intervalType: Exclude<HabitIntervalType, 'unknown'> } =>
+      p.active && p.intervalType !== 'unknown'
+    )
     .map((pattern) => {
       const state = stateByHabitId[pattern.habitId];
       if (state?.snoozedUntil && state.snoozedUntil >= today) return null;
@@ -299,11 +304,13 @@ export const findDueHabitReminder = (
 
         const doms = matches.slice(-6).map((t) => new Date(t.date).getDate());
         const expectedDom = doms.length >= 3 ? Math.round(median(doms)) : 1;
-        const windowStart = clamp(expectedDom - 7, 1, 31);
-        const windowEnd = clamp(expectedDom + 7, 1, 31);
-        if (todayDom < windowStart || todayDom > windowEnd) return null;
+        const lastDayThisMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+        const expectedDayThisMonth = Math.min(expectedDom, lastDayThisMonth);
+        // Use the expected day plus one late day. The previous +/- 7 day
+        // window was too broad to feel like a deliberate reminder.
+        if (todayDom < expectedDayThisMonth || todayDom > expectedDayThisMonth + 1) return null;
       } else {
-        // Daily/unknown: day-of-week + time-of-day window.
+        // Daily: day-of-week + time-of-day window.
         if (dow < 0.6) return null;
         if (pattern.timeWindowEndMin !== null) {
           if (nowMin < pattern.timeWindowStartMin!) return null;
@@ -330,6 +337,7 @@ export const findDueHabitReminder = (
           category: pattern.category,
           description: pattern.merchantKey ? pattern.merchantKey : `${pattern.category}`,
           amount,
+          intervalType: pattern.intervalType,
         },
         score: scorePattern(pattern),
       };

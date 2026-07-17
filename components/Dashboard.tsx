@@ -1,536 +1,379 @@
+import React, { Suspense, useMemo, useState } from 'react';
+import {
+  ArrowDownRight,
+  ArrowRight,
+  ArrowUpRight,
+  CalendarClock,
+  ChevronLeft,
+  ChevronRight,
+  CircleAlert,
+  Lightbulb,
+  Sparkles,
+  TrendingUp,
+  Wallet,
+} from 'lucide-react';
+import { Category, Debt, Goal, RecurringTransaction, Transaction } from '../types';
+import { getNextRecurringDate } from '../utils/date';
+import { spendingAmountFor } from '../utils/transactions';
+import { GoalIcon } from './ui/GoalIcon';
 
-import React, { useState, useMemo, Suspense, useEffect, useRef } from 'react';
-import { Transaction, Category, Debt, Goal } from '../types';
-import { CategoryIcon } from './ui/CategoryIcon';
-import { Wallet, ShieldAlert, Landmark, TrendingUp, History, ArrowUpRight, ArrowDownRight, CalendarClock, AlertCircle, Target } from 'lucide-react';
-import { simulateDebtPayoff } from '../utils/debtPayoff';
 const CashFlowChart = React.lazy(() => import('./charts/CashFlowChart'));
-const CategoryChart = React.lazy(() => import('./charts/CategoryChart'));
+
+type TransactionPrefill = Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>>;
 
 interface DashboardProps {
   transactions: Transaction[];
   debts?: Debt[];
   goals?: Goal[];
+  recurringRules?: RecurringTransaction[];
+  onQuickAdd: (prefill: TransactionPrefill) => void;
+  onOpenTransactions: () => void;
+  onOpenDebts: () => void;
+  onPayDebt: (id: string) => void;
+  onOpenGoals: () => void;
+  onAddGoalFunds: (id: string) => void;
 }
 
-type TimeRange = 'today' | 'week' | 'month' | 'all';
+const formatJPY = (amount: number) => `¥${Math.round(Math.abs(amount)).toLocaleString()}`;
+const monthStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1);
+const monthEnd = (date: Date) => new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59, 999);
+const monthKey = (date: Date) => `${date.getFullYear()}-${date.getMonth()}`;
+const shiftMonth = (date: Date, delta: number) => new Date(date.getFullYear(), date.getMonth() + delta, 1);
+const isSameMonth = (date: Date, month: Date) =>
+  date.getFullYear() === month.getFullYear() && date.getMonth() === month.getMonth();
 
-const formatJPY = (amount: number) => `¥${amount.toLocaleString()}`;
-const formatDate = (date?: string | null) => {
-  if (!date) return 'N/A';
-  const dt = new Date(date);
-  return isNaN(dt.getTime()) ? 'N/A' : dt.toLocaleDateString();
+const median = (values: number[]) => {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 };
 
-const CountUp: React.FC<{ value: number }> = ({ value }) => {
-  const [display, setDisplay] = useState(0);
-  const hasAnimated = useRef(false);
-  useEffect(() => {
-    if (hasAnimated.current) {
-      setDisplay(value); // jump to the latest value after the first run
-      return;
-    }
+const totalsFor = (transactions: Transaction[]) => transactions.reduce(
+  (totals, transaction) => {
+    if (transaction.type === 'income') totals.income += transaction.amount;
+    if (transaction.type === 'expense') totals.expenses += spendingAmountFor(transaction);
+    return totals;
+  },
+  { income: 0, expenses: 0 },
+);
 
-    let frame: number;
-    const duration = 1000;
-    const start = performance.now();
-    const animate = (now: number) => {
-      const progress = Math.min(1, Math.max(0, (now - start) / duration));
-      setDisplay(value * progress);
-      if (progress < 1) {
-        frame = requestAnimationFrame(animate);
-      } else {
-        hasAnimated.current = true;
-      }
-    };
-    frame = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(frame);
-  }, [value]);
-  return <>{formatJPY(Math.round(display))}</>;
-};
+const signedJPY = (amount: number) => amount < 0 ? `−${formatJPY(amount)}` : formatJPY(amount);
+const normalizedDescription = (description: string) => description
+  .replace(/^\(Recurring\)\s*/i, '')
+  .trim()
+  .toLocaleLowerCase();
 
-export const Dashboard: React.FC<DashboardProps> = ({ transactions, debts = [], goals = [] }) => {
-  const [timeRange, setTimeRange] = useState<TimeRange>('month');
-  const [payoffStrategy, setPayoffStrategy] = useState<'avalanche' | 'snowball'>('avalanche');
-  const [extraDebtBudget, setExtraDebtBudget] = useState(0);
-  // --- 1. Date Calculations Helpers ---
-  const getStartOfWeek = (date: Date) => {
-    const start = new Date(date);
-    const day = start.getDay();
-    const diff = day === 0 ? -6 : 1 - day; // Monday start
-    start.setDate(start.getDate() + diff);
-    start.setHours(0, 0, 0, 0);
-    return start;
-  };
+export const Dashboard: React.FC<DashboardProps> = ({
+  transactions,
+  debts = [],
+  goals = [],
+  recurringRules = [],
+  onQuickAdd,
+  onOpenTransactions,
+  onOpenDebts,
+  onPayDebt,
+  onOpenGoals,
+  onAddGoalFunds,
+}) => {
+  const currentMonth = monthStart(new Date());
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [showForecastDetails, setShowForecastDetails] = useState(false);
+  const isCurrentMonth = monthKey(selectedMonth) === monthKey(currentMonth);
+  const selectedEnd = monthEnd(selectedMonth);
 
-  const isSameDay = (d1: Date, d2: Date) => 
-    d1.getFullYear() === d2.getFullYear() && 
-    d1.getMonth() === d2.getMonth() && 
-    d1.getDate() === d2.getDate();
-
-  const isThisWeek = (date: Date) => {
-    const today = new Date();
-    const startOfWeek = getStartOfWeek(today);
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(endOfWeek.getDate() + 7);
-    return date >= startOfWeek && date < endOfWeek;
-  };
-
-  const isThisMonth = (date: Date) => {
-    const today = new Date();
-    return date.getMonth() === today.getMonth() && date.getFullYear() === today.getFullYear();
-  };
-
-  // --- 2. Filter Transactions for CHARTS ---
-  const filteredTransactions = useMemo(() => {
-    const now = new Date();
-    return transactions.filter(t => {
-      const tDate = new Date(t.date);
-      if (timeRange === 'today') return isSameDay(tDate, now);
-      if (timeRange === 'week') return isThisWeek(tDate);
-      if (timeRange === 'month') return isThisMonth(tDate);
-      return true;
-    });
-  }, [transactions, timeRange]);
-
-  // --- 3. Key Metrics (View Dependent) ---
-  const income = filteredTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-  const expenses = filteredTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
-  const todayExpenses = transactions
-    .filter(t => t.type === 'expense' && isSameDay(new Date(t.date), new Date()))
-    .reduce((sum, t) => sum + t.amount, 0);
-
-  // --- 5. Income vs Expense Monthly Trend Chart ---
-  const trendChartData = useMemo(() => {
-    const now = new Date();
-
-    if (timeRange === 'today' || timeRange === 'week') {
-      const startOfWeek = getStartOfWeek(now);
-      const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-      return labels.map((label, index) => {
-        const day = new Date(startOfWeek);
-        day.setDate(startOfWeek.getDate() + index);
-
-        const dayTotals = transactions
-          .filter(t => isSameDay(new Date(t.date), day))
-          .reduce(
-            (acc, t) => {
-              if (t.type === 'income') acc.income += t.amount;
-              else acc.expense += t.amount;
-              return acc;
-            },
-            { income: 0, expense: 0 }
-          );
-
-        return { name: label, income: dayTotals.income, expense: dayTotals.expense };
-      });
-    }
-
-    const data: Record<string, { name: string; income: number; expense: number }> = {};
-
-    // Initialize last 6 months
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const label = d.toLocaleString('default', { month: 'short' });
-      data[key] = { name: label, income: 0, expense: 0 };
-    }
-
-    transactions.forEach(t => {
-       const d = new Date(t.date);
-       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-       if (data[key]) {
-         if (t.type === 'income') data[key].income += t.amount;
-         else data[key].expense += t.amount;
-       }
-    });
-
-    return Object.values(data);
-  }, [transactions, timeRange]);
-
-  // --- 6. Category Pie Data ---
-  const categoryData = Object.values(Category).map(cat => {
-    if (cat === Category.Debt || cat === Category.Savings) return null; 
-    const amount = filteredTransactions
-      .filter(e => e.category === cat && e.type === 'expense')
-      .reduce((sum, e) => sum + e.amount, 0);
-    return { name: cat, value: amount };
-  }).filter((item): item is { name: Category; value: number } => item !== null && item.value > 0);
-
-  // Sort for better grayscale gradient effect
-  categoryData.sort((a, b) => b.value - a.value);
-
-  // --- 7. Goals Snapshot ---
-  const goalSnapshot = useMemo(() => {
-    if (!goals.length) return null;
-
-    const totalSaved = goals.reduce((sum, g) => sum + g.currentAmount, 0);
-    const totalTarget = goals.reduce((sum, g) => sum + g.targetAmount, 0);
-
-    const progressList = goals
-      .map(g => ({
-        id: g.id,
-        name: g.name,
-        current: g.currentAmount,
-        target: g.targetAmount,
-        percent: g.targetAmount ? Math.min(100, Math.round((g.currentAmount / g.targetAmount) * 100)) : 0,
-      }))
-      .sort((a, b) => b.percent - a.percent);
-
-    return { totalSaved, totalTarget, topGoals: progressList.slice(0, 3) };
-  }, [goals]);
-
-  // --- 8. Debt Helpers ---
-  const activeDebts = debts.filter(d => d.type === 'payable' && !d.isPaid);
-  const totalDebt = activeDebts.reduce((sum, d) => sum + d.amount, 0);
-  const totalMinDue = activeDebts.reduce(
-    (sum, d) => sum + (d.minimumPayment ?? Math.max(d.amount * 0.02, 1000)),
-    0
+  const selectedTransactions = useMemo(
+    () => transactions.filter((transaction) => {
+      const date = new Date(transaction.date);
+      return !Number.isNaN(date.getTime()) && isSameMonth(date, selectedMonth);
+    }),
+    [selectedMonth, transactions],
   );
-  const latestDueDate = useMemo(() => {
-    let latest: Date | null = null;
-    for (const debt of activeDebts) {
-      if (!debt.dueDate) continue;
-      const due = new Date(debt.dueDate);
+  const previousMonth = shiftMonth(selectedMonth, -1);
+  const previousTransactions = useMemo(
+    () => transactions.filter((transaction) => {
+      const date = new Date(transaction.date);
+      return !Number.isNaN(date.getTime()) && isSameMonth(date, previousMonth);
+    }),
+    [previousMonth, transactions],
+  );
+
+  const { income, expenses } = totalsFor(selectedTransactions);
+  const previousTotals = totalsFor(previousTransactions);
+  const balance = income - expenses;
+  const statusTone = balance < 0 ? 'negative' : balance === 0 ? 'neutral' : 'positive';
+
+  const scheduled = useMemo(() => {
+    const totals = { income: 0, expenses: 0, count: 0 };
+    for (const rule of recurringRules) {
+      let due = new Date(rule.nextDue);
       if (Number.isNaN(due.getTime())) continue;
-      if (!latest || due > latest) latest = due;
+      let safety = 0;
+      while (due <= selectedEnd && safety < 8) {
+        if (due >= selectedMonth) {
+          if (rule.transactionTemplate.type === 'income') totals.income += rule.transactionTemplate.amount;
+          else totals.expenses += spendingAmountFor(rule.transactionTemplate);
+          totals.count++;
+        }
+        due = getNextRecurringDate(due, rule.frequency, rule.anchorDay ?? due.getDate());
+        safety++;
+      }
     }
-    return latest;
-  }, [activeDebts]);
+    return totals;
+  }, [recurringRules, selectedEnd, selectedMonth]);
 
-  const nextDueDebt = useMemo(() => {
-    const withDue = activeDebts.filter(d => d.dueDate);
-    if (!withDue.length) return null;
-    return withDue.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())[0];
-  }, [activeDebts]);
+  const historicalExpenseMedian = useMemo(() => {
+    const monthlyTotals = [1, 2, 3]
+      .map((offset) => {
+        const month = shiftMonth(selectedMonth, -offset);
+        return totalsFor(transactions.filter((transaction) => {
+          const date = new Date(transaction.date);
+          return !Number.isNaN(date.getTime()) && isSameMonth(date, month);
+        })).expenses;
+      })
+      .filter((total) => total > 0);
+    return Math.round(median(monthlyTotals));
+  }, [selectedMonth, transactions]);
 
-  const topDebts = useMemo(
-    () => [...activeDebts].sort((a, b) => b.amount - a.amount).slice(0, 3),
-    [activeDebts]
-  );
+  const activeDebts = useMemo(() => debts
+    .filter((debt) => !debt.isPaid && debt.amount > 0)
+    .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()), [debts]);
+  const nextDebt = activeDebts[0] ?? null;
+  const debtDueThisMonth = activeDebts.reduce((sum, debt) => {
+    const due = new Date(debt.dueDate);
+    if (Number.isNaN(due.getTime())) return sum;
+    const belongsToSelectedMonth = isSameMonth(due, selectedMonth);
+    const isOverdueInCurrentMonth = isCurrentMonth && due < selectedMonth;
+    if (!belongsToSelectedMonth && !isOverdueInCurrentMonth) return sum;
+    return sum + Math.min(debt.amount, debt.minimumPayment ?? debt.amount);
+  }, 0);
 
-  const computeDebtPlan = (
-    strategy: 'avalanche' | 'snowball',
-    extraBudget: number
-  ) => {
-    if (activeDebts.length === 0) return null;
+  // Do not multiply an early one-off purchase across every remaining day.
+  // Use recent normal spending as a floor, then add only known future entries.
+  const expectedExpenses = isCurrentMonth
+    ? Math.max(expenses + scheduled.expenses, historicalExpenseMedian)
+    : expenses;
+  const expectedIncome = isCurrentMonth ? income + scheduled.income : income;
+  const expectedMonthEnd = expectedIncome - expectedExpenses - debtDueThisMonth;
+  const safeToSpend = isCurrentMonth
+    ? income - expenses - scheduled.expenses - debtDueThisMonth
+    : balance;
+  const reserved = isCurrentMonth ? scheduled.expenses + debtDueThisMonth : 0;
+  const spentShare = income > 0 ? Math.min(100, (expenses / income) * 100) : expenses > 0 ? 100 : 0;
+  const reservedShare = income > 0 ? Math.min(100 - spentShare, (reserved / income) * 100) : 0;
 
-    const plan = simulateDebtPayoff(activeDebts, {
-      strategy,
-      extraPrincipalBudget: extraBudget,
-      startDate: latestDueDate ?? new Date(),
-      minPaymentFallback: (d) => Math.max(d.amount * 0.02, 1000),
+  const expenseChange = previousTotals.expenses > 0
+    ? Math.round(((expenses - previousTotals.expenses) / previousTotals.expenses) * 100)
+    : null;
+  const comparisonText = expenseChange === null
+    ? previousTotals.expenses === 0 && expenses > 0
+      ? 'No spending recorded in the previous month'
+      : 'No previous-month comparison yet'
+    : expenseChange === 0
+      ? 'Spending is the same as last month'
+      : `${Math.abs(expenseChange)}% ${expenseChange > 0 ? 'more' : 'less'} spending than last month`;
+
+  const trendChartData = useMemo(() => {
+    const months = Array.from({ length: 6 }, (_, index) => shiftMonth(selectedMonth, index - 5));
+    return months.map((month) => {
+      const totals = totalsFor(transactions.filter((transaction) => {
+        const date = new Date(transaction.date);
+        return !Number.isNaN(date.getTime()) && isSameMonth(date, month);
+      }));
+      return {
+        name: `${month.toLocaleDateString(undefined, { month: 'short' })}${isSameMonth(month, selectedMonth) ? ' •' : ''}`,
+        income: totals.income,
+        expense: totals.expenses,
+      };
     });
+  }, [selectedMonth, transactions]);
 
-    return {
-      warning: plan.warning,
-      date: plan.payoffDateLabel,
-      months: plan.months,
-      budget: plan.monthlyPrincipalBudget,
-      interest: plan.totalInterestPaid,
-    };
-  };
+  const quickEntries = useMemo(() => {
+    const cutoff = Date.now() - 180 * 24 * 60 * 60 * 1000;
+    const groups = new Map<string, { description: string; category: Category; amounts: number[]; count: number; latest: number }>();
+    for (const transaction of transactions) {
+      const timestamp = new Date(transaction.date).getTime();
+      if (transaction.type !== 'expense' || timestamp < cutoff) continue;
+      if (transaction.category === Category.Debt || transaction.category === Category.Savings) continue;
+      const normalized = normalizedDescription(transaction.description);
+      if (!normalized) continue;
+      const key = `${transaction.category}|${normalized}`;
+      const current = groups.get(key) ?? {
+        description: transaction.description.replace(/^\(Recurring\)\s*/i, '').trim(),
+        category: transaction.category,
+        amounts: [],
+        count: 0,
+        latest: 0,
+      };
+      current.amounts.push(transaction.amount);
+      current.count++;
+      current.latest = Math.max(current.latest, timestamp);
+      groups.set(key, current);
+    }
+    return [...groups.values()]
+      .filter((entry) => entry.count >= 2)
+      .sort((a, b) => (b.count * 10 + b.latest / 1e13) - (a.count * 10 + a.latest / 1e13))
+      .slice(0, 3)
+      .map((entry) => ({ ...entry, amount: Math.round(median(entry.amounts)) }));
+  }, [transactions]);
+  const homeGoals = useMemo(() => goals
+    .filter((goal) => goal.currentAmount < goal.targetAmount)
+    .sort((a, b) => {
+      const aDeadline = a.deadline ? new Date(a.deadline).getTime() : Number.POSITIVE_INFINITY;
+      const bDeadline = b.deadline ? new Date(b.deadline).getTime() : Number.POSITIVE_INFINITY;
+      return aDeadline - bDeadline;
+    })
+    .slice(0, 2), [goals]);
 
-  const baselinePlan = useMemo(
-    () => computeDebtPlan(payoffStrategy, 0),
-    [activeDebts, payoffStrategy]
-  );
+  const monthlyInsights = useMemo(() => {
+    const insights: string[] = [];
+    if (balance < 0) insights.push(`Spending is ${formatJPY(balance)} above recorded income.`);
 
-  const boostedPlan = useMemo(
-    () => computeDebtPlan(payoffStrategy, extraDebtBudget),
-    [activeDebts, payoffStrategy, extraDebtBudget]
-  );
+    const categoryTotals = new Map<Category, number>();
+    const previousCategoryTotals = new Map<Category, number>();
+    for (const transaction of selectedTransactions) {
+      if (transaction.type === 'expense') categoryTotals.set(transaction.category, (categoryTotals.get(transaction.category) ?? 0) + spendingAmountFor(transaction));
+    }
+    for (const transaction of previousTransactions) {
+      if (transaction.type === 'expense') previousCategoryTotals.set(transaction.category, (previousCategoryTotals.get(transaction.category) ?? 0) + spendingAmountFor(transaction));
+    }
+    const increases = [...categoryTotals.entries()]
+      .map(([category, amount]) => ({ category, increase: amount - (previousCategoryTotals.get(category) ?? 0) }))
+      .filter((item) => item.increase > 0)
+      .sort((a, b) => b.increase - a.increase);
+    if (increases[0]) insights.push(`${increases[0].category} increased most: +${formatJPY(increases[0].increase)} versus last month.`);
 
-  const monthsFaster =
-    boostedPlan &&
-    baselinePlan &&
-    boostedPlan.months !== null &&
-    baselinePlan.months !== null &&
-    baselinePlan.months > boostedPlan.months
-      ? baselinePlan.months - boostedPlan.months
-      : 0;
+    const largestExpense = selectedTransactions
+      .filter((transaction) => spendingAmountFor(transaction) > 0)
+      .sort((a, b) => spendingAmountFor(b) - spendingAmountFor(a))[0];
+    const largestExpenseAmount = largestExpense ? spendingAmountFor(largestExpense) : 0;
+    if (largestExpense && expenses > 0 && largestExpenseAmount / expenses >= 0.25) {
+      insights.push(`${largestExpense.description} is ${Math.round((largestExpenseAmount / expenses) * 100)}% of this month’s spending.`);
+    }
+    if (scheduled.expenses + debtDueThisMonth > 0) {
+      insights.push(`${formatJPY(scheduled.expenses + debtDueThisMonth)} is reserved for scheduled expenses and debt payments.`);
+    }
+    return insights.slice(0, 3);
+  }, [balance, debtDueThisMonth, expenses, previousTransactions, scheduled.expenses, selectedTransactions]);
 
-  const recentTransactions = transactions.slice(0, 5);
+  const monthLabel = selectedMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const statusLabel = balance < 0 ? 'Over by' : balance > 0 ? 'Remaining' : 'Balanced';
+  const statusAmount = balance === 0 ? '¥0' : formatJPY(balance);
 
   return (
-    <div className="space-y-6 pb-32">
-      
-      {/* Time Filter Tabs - Minimal */}
-      <div className="flex p-1 bg-zinc-900 rounded-lg border border-zinc-800">
-        {(['today', 'week', 'month', 'all'] as TimeRange[]).map((r) => (
-          <button
-            key={r}
-            onClick={() => setTimeRange(r)}
-            className={`flex-1 py-2 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all ${
-              timeRange === r ? 'bg-zinc-100 text-black shadow-sm' : 'text-zinc-600 hover:text-zinc-400'
-            }`}
-          >
-            {r}
-          </button>
-        ))}
-      </div>
-
-      {/* Key Metrics Cards */}
-      {timeRange === 'today' ? (
-         <div className="bg-zinc-900/70 backdrop-blur-sm rounded-xl p-6 text-white border border-zinc-800/80 relative overflow-hidden">
-           <div className="absolute top-0 right-0 p-4 opacity-10">
-              <Wallet size={48} className="text-white" />
-           </div>
-           <div className="flex items-center gap-2 mb-2">
-             <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Daily Spend</span>
-           </div>
-           <div className="text-4xl font-bold tracking-tight text-white tabular-nums"><CountUp value={todayExpenses} /></div>
-         </div>
-      ) : (
-        <div className="bg-zinc-900/70 backdrop-blur-sm rounded-xl p-6 text-white border border-zinc-800/80 relative">
-          <div className="flex items-center gap-2 mb-5">
-            <Landmark size={14} className="text-zinc-500" />
-            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-              Overview ({timeRange})
-            </span>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-6">
-            <div>
-               <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
-                  <ArrowUpRight size={12} className="text-zinc-200" /> Income
-               </div>
-               <p className="text-2xl font-bold text-white tabular-nums"><CountUp value={income} /></p>
-            </div>
-            <div>
-               <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-500 mb-1">
-                  <ArrowDownRight size={12} className="text-zinc-600" /> Expense
-               </div>
-               <p className="text-2xl font-bold text-zinc-500 tabular-nums"><CountUp value={expenses} /></p>
-            </div>
-          </div>
+    <div className="space-y-5 pb-32">
+      <section className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900/70 p-2">
+        <button type="button" onClick={() => setSelectedMonth((month) => shiftMonth(month, -1))} className="flex h-11 w-11 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-800 hover:text-white" aria-label="Previous month">
+          <ChevronLeft size={20} />
+        </button>
+        <div className="flex min-w-0 items-center gap-2 px-2 text-center">
+          <div className="min-w-0"><span className="block truncate text-base font-bold text-white">{monthLabel}</span><span className="block text-[11px] font-medium text-zinc-500">{isCurrentMonth ? 'Current month' : 'Past month'}</span></div>
+          {!isCurrentMonth && <button type="button" onClick={() => setSelectedMonth(currentMonth)} className="min-h-9 rounded-full border border-zinc-700 bg-zinc-800 px-3 text-[10px] font-bold text-zinc-300 hover:text-white">Today</button>}
         </div>
-      )}
+        <button type="button" onClick={() => setSelectedMonth((month) => shiftMonth(month, 1))} disabled={isCurrentMonth} className="flex h-11 w-11 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-800 hover:text-white disabled:cursor-not-allowed disabled:text-zinc-800" aria-label="Next month">
+          <ChevronRight size={20} />
+        </button>
+      </section>
 
-      {/* Goals Snapshot */}
-      {goalSnapshot && (
-        <div className="bg-zinc-900/70 backdrop-blur-sm rounded-xl p-5 text-white border border-zinc-800/80 relative overflow-hidden">
-          <div className="absolute top-0 right-0 p-4 opacity-10">
-            <Target size={48} className="text-white" />
-          </div>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-2">
-              <Target size={12} /> Goals Snapshot
-            </h3>
-            <span className="text-[10px] text-zinc-500 font-bold tabular-nums">
-              {goalSnapshot.totalTarget ? Math.min(100, Math.round((goalSnapshot.totalSaved / goalSnapshot.totalTarget) * 100)) : 0}%
-            </span>
-          </div>
-          <div className="flex gap-6 mb-4">
-            <div>
-              <p className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Saved</p>
-              <p className="text-xl font-bold tabular-nums text-white">{formatJPY(goalSnapshot.totalSaved)}</p>
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(300px,0.75fr)] lg:items-start">
+        <div className="contents lg:block lg:space-y-5">
+          <section className={`order-1 relative overflow-hidden rounded-2xl border p-6 sm:p-7 ${
+            statusTone === 'negative'
+              ? 'border-rose-500/30 bg-gradient-to-br from-rose-500/15 via-zinc-900/90 to-zinc-950'
+              : statusTone === 'positive'
+                ? 'border-emerald-500/25 bg-gradient-to-br from-emerald-500/10 via-zinc-900/90 to-zinc-950'
+                : 'border-zinc-800 bg-zinc-900/80'
+          }`}>
+            <p className="mb-2 text-xs font-semibold text-zinc-400">{statusLabel}</p>
+            <div className={`text-4xl font-extrabold tracking-tight tabular-nums sm:text-5xl ${statusTone === 'negative' ? 'text-rose-300' : statusTone === 'positive' ? 'text-emerald-300' : 'text-white'}`}>{statusAmount}</div>
+            <p className="mt-2 text-sm text-zinc-400">
+              {balance < 0 ? 'Expenses are higher than recorded income this month.' : balance > 0 ? 'Available from this month’s recorded income.' : selectedTransactions.length ? 'Income and expenses are currently even.' : 'Add income or an expense to start this month.'}
+            </p>
+            <div className="mt-6 grid grid-cols-3 gap-3 border-t border-white/10 pt-5">
+              <div><div className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-zinc-500"><ArrowUpRight size={13} /> Income</div><p className="text-base font-bold text-white tabular-nums sm:text-lg">{formatJPY(income)}</p></div>
+              <div><div className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-zinc-500"><ArrowDownRight size={13} /> Spent</div><p className="text-base font-bold text-zinc-200 tabular-nums sm:text-lg">{formatJPY(expenses)}</p></div>
+              <div><div className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-zinc-500"><Wallet size={13} /> Reserved</div><p className="text-base font-bold text-zinc-200 tabular-nums sm:text-lg">{formatJPY(reserved)}</p></div>
             </div>
-            <div>
-              <p className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Targets</p>
-              <p className="text-xl font-bold tabular-nums text-zinc-300">{formatJPY(goalSnapshot.totalTarget)}</p>
-            </div>
-          </div>
-          <div className="space-y-3">
-            {goalSnapshot.topGoals.map(goal => (
-              <div key={goal.id}>
-                <div className="flex justify-between text-xs text-zinc-400 mb-1">
-                  <span className="font-semibold text-zinc-200 truncate">{goal.name}</span>
-                  <span className="tabular-nums">{goal.percent}%</span>
-                </div>
-                <div className="w-full h-2 bg-zinc-800 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-white rounded-full transition-all"
-                    style={{ width: `${goal.percent}%` }}
-                  />
-                </div>
-                <p className="text-[10px] text-zinc-500 mt-1 tabular-nums">
-                  {formatJPY(goal.current)} / {formatJPY(goal.target)}
-                </p>
+            <div className="mt-4 flex h-2 overflow-hidden rounded-full bg-zinc-800"><div className={`h-full transition-all duration-500 ${expenses > income && income > 0 ? 'bg-rose-400' : 'bg-emerald-400'}`} style={{ width: `${spentShare}%` }} /><div className="h-full bg-zinc-500 transition-all duration-500" style={{ width: `${reservedShare}%` }} /></div>
+            {isCurrentMonth && (
+              <div className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-black/20 px-4 py-3">
+                <div><p className="text-[11px] font-semibold text-zinc-500">Safe after upcoming bills</p><p className="mt-0.5 text-[10px] text-zinc-600">Remaining minus {formatJPY(reserved)} reserved</p></div>
+                <strong className={`shrink-0 text-lg tabular-nums ${safeToSpend < 0 ? 'text-rose-300' : 'text-emerald-300'}`}>{signedJPY(safeToSpend)}</strong>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
+          </section>
 
-      {/* Debt Projection - Minimal */}
-      {totalDebt > 0 && (
-        <div className="bg-zinc-900/70 backdrop-blur-sm border border-zinc-800/80 p-5 rounded-xl">
-          <div className="flex justify-between items-center mb-3">
-            <div>
-              <h3 className="text-zinc-500 font-bold text-[10px] uppercase tracking-wider mb-1">Active Debt</h3>
-              <span className="text-2xl font-bold text-zinc-200 tabular-nums">{formatJPY(totalDebt)}</span>
-            </div>
-            <div className="bg-zinc-800 p-3 rounded-full text-zinc-400">
-              <ShieldAlert size={20} />
-            </div>
-          </div>
-          <div className="flex gap-4 text-[11px] text-zinc-400 mb-3">
-            <span className="flex items-center gap-1">
-              <CalendarClock size={12} /> Next due: {nextDueDebt ? formatDate(nextDueDebt.dueDate) : 'N/A'}
-            </span>
-            <span className="flex items-center gap-1">
-              <Wallet size={12} /> Min this month: {formatJPY(Math.round(totalMinDue))}
-            </span>
-          </div>
-          <div className="space-y-2">
-            {topDebts.map(d => (
-              <div key={d.id} className="flex items-center justify-between text-sm text-zinc-200">
-                <div className="flex items-center gap-2 truncate">
-                  <span className="h-2 w-2 rounded-full bg-zinc-500" />
-                  <span className="font-semibold truncate">{d.person}</span>
+          {isCurrentMonth && (
+            <section className="order-2 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <div className="flex items-start gap-3">
+                <CircleAlert size={17} className={`mt-0.5 shrink-0 ${expectedMonthEnd < 0 ? 'text-rose-300' : 'text-zinc-500'}`} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm leading-relaxed text-zinc-300">Forecast: <strong className={`tabular-nums ${expectedMonthEnd < 0 ? 'text-rose-300' : 'text-zinc-100'}`}>{expectedMonthEnd < 0 ? `${formatJPY(expectedMonthEnd)} short` : `${formatJPY(expectedMonthEnd)} left`}</strong> at the end of {monthLabel}.</p>
+                  {showForecastDetails && <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">Uses the median of up to three previous months, recorded income, and known recurring expenses and debt payments. It does not multiply one unusual day across the month.</p>}
                 </div>
-                <div className="text-right text-[11px] text-zinc-400">
-                  <div className="font-bold text-sm text-white tabular-nums">{formatJPY(d.amount)}</div>
-                  <div>Due {formatDate(d.dueDate)}</div>
-                </div>
+                <button type="button" onClick={() => setShowForecastDetails((value) => !value)} className="min-h-9 shrink-0 rounded-lg px-2 text-[10px] font-bold text-zinc-400 hover:bg-white/5 hover:text-white">{showForecastDetails ? 'Hide' : 'Why?'}</button>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {baselinePlan && (
-        <div className="bg-zinc-900/70 backdrop-blur-sm border border-zinc-800/80 p-5 rounded-xl">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="font-bold text-zinc-500 text-[10px] uppercase tracking-wider flex items-center gap-2">
-              <CalendarClock size={12} /> Debt-Free Projection
-            </h3>
-            <div className="flex gap-1">
-              {(['avalanche', 'snowball'] as const).map(s => (
-                <button
-                  key={s}
-                  onClick={() => setPayoffStrategy(s)}
-                  className={`px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide border transition ${
-                    payoffStrategy === s
-                      ? 'bg-white text-black border-white'
-                      : 'border-zinc-800 text-zinc-400 hover:text-white'
-                  }`}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-          {baselinePlan.warning ? (
-            <div className="flex items-center gap-2 text-amber-400 text-sm">
-              <AlertCircle size={14} /> {baselinePlan.warning}
-            </div>
-          ) : (
-            <>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-wide mb-1">Debt Free By</p>
-                  <p className="text-lg font-bold text-white">{baselinePlan.date}</p>
-                  <p className="text-[11px] text-zinc-500">~{baselinePlan.months} months at minimums</p>
-                  <p className="text-[11px] text-zinc-500">Est. interest: {formatJPY(Math.round(baselinePlan.interest ?? 0))}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-wide mb-1">Monthly Budget</p>
-                  <p className="text-lg font-bold text-white tabular-nums">{formatJPY(Math.round(baselinePlan.budget))}</p>
-                </div>
-              </div>
-
-              <div className="mt-3 space-y-2 text-[11px] text-zinc-500">
-                <div className="flex items-center gap-1 flex-nowrap">
-                  <span>Extra toward debt:</span>
-                  {[0, 5000, 10000, 20000, 30000].map(v => (
-                    <button
-                      key={v}
-                      onClick={() => setExtraDebtBudget(v)}
-                      className={`px-2.5 py-1 rounded-md border text-[10px] font-bold uppercase tracking-wide transition ${
-                        extraDebtBudget === v
-                          ? 'bg-white text-black border-white'
-                          : 'border-zinc-800 text-zinc-400 hover:text-white'
-                      }`}
-                    >
-                      {v === 0 ? 'Base' : `+${v / 1000}k`}
-                    </button>
-                  ))}
-                </div>
-                {extraDebtBudget > 0 && boostedPlan && !boostedPlan.warning && (
-                  <div className="bg-zinc-950/70 border border-zinc-800 rounded-lg p-3 text-zinc-200">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-wide mb-0.5">With Extra</p>
-                        <p className="text-sm font-bold text-white">{boostedPlan.date}</p>
-                        <p className="text-[11px] text-zinc-500">~{boostedPlan.months} months</p>
-                        <p className="text-[11px] text-zinc-500">Est. interest: {formatJPY(Math.round(boostedPlan.interest ?? 0))}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[10px] uppercase text-zinc-500 font-bold tracking-wide mb-0.5">Budget</p>
-                        <p className="text-sm font-bold text-white tabular-nums">{formatJPY(Math.round(boostedPlan.budget))}</p>
-                        {monthsFaster > 0 && (
-                          <p className="text-[11px] text-emerald-400">Saves ~{monthsFaster} months</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {extraDebtBudget > 0 && boostedPlan?.warning && (
-                  <div className="flex items-center gap-2 text-amber-400 text-sm">
-                    <AlertCircle size={14} /> {boostedPlan.warning}
-                  </div>
-                )}
-              </div>
-            </>
+            </section>
           )}
-        </div>
-      )}
 
-      {/* Charts Grid */}
-      <div className="grid grid-cols-1 gap-6">
-        {/* Trend Chart */}
-        <div className="bg-zinc-900/70 backdrop-blur-sm p-5 rounded-xl border border-zinc-800/80">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-bold text-zinc-500 text-[10px] uppercase tracking-wider flex items-center gap-2">
-              <TrendingUp size={12} /> Cash Flow Trend
-            </h3>
-          </div>
-          <Suspense fallback={<div className="text-[10px] text-zinc-600">Loading chart...</div>}>
-            <CashFlowChart data={trendChartData} formatJPY={formatJPY} />
-          </Suspense>
-        </div>
-
-        {/* Category Chart */}
-        <div className="bg-zinc-900/70 backdrop-blur-sm p-5 rounded-xl border border-zinc-800/80">
-          <h3 className="font-bold text-zinc-500 text-[10px] uppercase tracking-wider mb-4">Category Breakdown</h3>
-          <Suspense fallback={<div className="text-[10px] text-zinc-600">Loading chart...</div>}>
-            <CategoryChart data={categoryData} formatJPY={formatJPY} />
-          </Suspense>
-        </div>
-      </div>
-
-      {/* Recent Activity Section */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between px-1">
-          <h3 className="font-bold text-zinc-500 text-[10px] uppercase tracking-wider flex items-center gap-2">
-             <History size={12} /> Recent Entries
-          </h3>
-        </div>
-        <div className="bg-zinc-900 rounded-xl border border-zinc-800 overflow-hidden">
-          {recentTransactions.length > 0 ? recentTransactions.map(t => (
-            <div key={t.id} className="flex items-center justify-between px-5 py-3.5 border-b border-zinc-800 last:border-0 active:bg-zinc-800 transition-colors">
-               <div className="flex items-center gap-4 min-w-0">
-                  <div className="w-9 h-9 rounded-md bg-zinc-950 flex items-center justify-center shrink-0 border border-zinc-800">
-                     <CategoryIcon category={t.category} size={16} className={t.type === 'income' ? 'text-white' : 'text-zinc-500'} />
-                  </div>
-                  <div className="min-w-0">
-                     <p className="text-sm font-bold text-zinc-200 leading-tight truncate">{t.description}</p>
-                     <p className="text-[10px] text-zinc-600 uppercase tracking-wide leading-tight mt-0.5">{new Date(t.date).toLocaleDateString()}</p>
-                  </div>
-               </div>
-               <span className={`font-bold text-sm whitespace-nowrap ml-3 tabular-nums ${t.type === 'income' ? 'text-white' : 'text-zinc-500'}`}>
-                  {t.type === 'income' ? '+' : ''}{formatJPY(t.amount)}
-               </span>
-            </div>
-          )) : (
-             <div className="p-6 text-center text-zinc-600 text-xs">No recent transactions.</div>
+          {quickEntries.length > 0 && (
+            <section className="order-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <div className="mb-3 flex items-center gap-2 text-xs font-bold text-zinc-300"><Sparkles size={14} /> Quick entries</div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {quickEntries.map((entry) => (
+                  <button key={`${entry.category}-${entry.description}`} type="button" onClick={() => onQuickAdd({ type: 'expense', amount: entry.amount, description: entry.description, category: entry.category, date: new Date().toLocaleDateString('en-CA') })} className="flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-3 text-left transition hover:border-zinc-700 hover:bg-zinc-900">
+                    <div className="min-w-0"><p className="truncate text-xs font-bold text-zinc-200">{entry.description}</p><p className="mt-0.5 text-[10px] text-zinc-600">{entry.category} · {entry.count} times</p></div>
+                    <span className="shrink-0 text-xs font-bold text-zinc-400 tabular-nums">{formatJPY(entry.amount)}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
           )}
+
+          {homeGoals.length > 0 && (
+            <section className="order-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3"><h2 className="text-xs font-bold text-zinc-300">Goals</h2><button type="button" onClick={onOpenGoals} className="flex min-h-9 items-center gap-1 px-1 text-[10px] font-semibold text-zinc-500 hover:text-white">View all <ArrowRight size={12} /></button></div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {homeGoals.map((goal) => {
+                  const percentage = Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100));
+                  return (
+                    <article key={goal.id} className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+                      <button type="button" onClick={onOpenGoals} className="flex w-full items-center gap-2 text-left"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-zinc-400"><GoalIcon icon={goal.icon} size={15} /></span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-bold text-zinc-200">{goal.name}</span><span className="block text-[10px] text-zinc-600">{formatJPY(goal.currentAmount)} of {formatJPY(goal.targetAmount)}</span></span><strong className="text-xs text-zinc-400 tabular-nums">{percentage === 0 ? 'Start' : `${percentage}%`}</strong></button>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800"><div className="h-full rounded-full bg-emerald-400" style={{ width: `${percentage}%` }} /></div>
+                      <div className="mt-2 flex items-center justify-between gap-2"><span className="truncate text-[10px] text-zinc-600">{goal.monthlyContribution ? `${formatJPY(goal.monthlyContribution)}/month` : 'Ready when you are'}</span><button type="button" onClick={() => onAddGoalFunds(goal.id)} className="min-h-9 shrink-0 rounded-lg bg-white px-3 text-[10px] font-bold uppercase tracking-wide text-black hover:bg-zinc-200">Fund</button></div>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          <section className="order-7 rounded-xl border border-zinc-800 bg-zinc-900/70 p-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div><h2 className="flex items-center gap-2 text-sm font-bold text-zinc-200"><TrendingUp size={16} /> Six-month cash flow</h2><div className="mt-1 flex flex-wrap items-center gap-3 text-[10px] text-zinc-500"><span>Ending in {monthLabel}</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-sm bg-white" /> Income</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-sm bg-zinc-500" /> Spending</span></div></div>
+              <button type="button" onClick={onOpenTransactions} className="flex items-center gap-1 text-xs font-semibold text-zinc-400 hover:text-white">Transactions <ArrowRight size={13} /></button>
+            </div>
+            <Suspense fallback={<div className="h-40 animate-pulse rounded-lg bg-zinc-800/60" />}><CashFlowChart data={trendChartData} formatJPY={(value) => formatJPY(value)} /></Suspense>
+          </section>
         </div>
+
+        <aside className="contents lg:block lg:space-y-5">
+          {monthlyInsights.length > 0 && (
+            <section className="order-5 rounded-xl border border-zinc-800 bg-zinc-900/70 p-5">
+              <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-zinc-200"><Lightbulb size={16} /> This month explained</h2>
+              <div className="space-y-3">{monthlyInsights.map((insight) => <p key={insight} className="border-l-2 border-zinc-700 pl-3 text-xs leading-relaxed text-zinc-400">{insight}</p>)}</div>
+              <p className={`mt-4 rounded-lg px-3 py-2.5 text-xs ${expenseChange !== null && expenseChange > 0 ? 'bg-rose-500/10 text-rose-300' : 'bg-zinc-950 text-zinc-400'}`}>{comparisonText}</p>
+            </section>
+          )}
+
+          {nextDebt && (
+            <section className="order-6 rounded-xl border border-zinc-800 bg-zinc-900/70 p-5">
+              <button type="button" onClick={onOpenDebts} className="flex w-full items-start justify-between gap-4 text-left"><div><p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Next debt payment</p><p className="mt-1 text-2xl font-bold text-white tabular-nums">{formatJPY(Math.min(nextDebt.amount, nextDebt.minimumPayment ?? nextDebt.amount))}</p></div><ArrowRight size={18} className="mt-1 text-zinc-600" /></button>
+              <div className="mt-4 flex items-center justify-between gap-3 border-t border-zinc-800 pt-4"><span className="flex items-center gap-1.5 text-xs text-zinc-500"><CalendarClock size={13} /> {nextDebt.person} · {new Date(nextDebt.dueDate).toLocaleDateString()}</span><button type="button" onClick={() => onPayDebt(nextDebt.id)} className="min-h-10 rounded-lg bg-white px-5 text-[11px] font-bold uppercase tracking-wide text-black hover:bg-zinc-200">Pay</button></div>
+            </section>
+          )}
+        </aside>
       </div>
-      
     </div>
   );
 };

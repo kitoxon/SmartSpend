@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { Debt, DebtType, DebtCategory } from '../types';
 import { localDateInputToIso } from '../utils/date';
+import { Trash2 } from 'lucide-react';
 
 interface DebtFormProps {
   onSave: (debt: Omit<Debt, 'id' | 'isPaid'>, existingId?: string) => void | Promise<void>;
   onCancel: () => void;
   debt?: Debt;
+  onDelete?: () => void;
 }
 
-export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt }) => {
+export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt, onDelete }) => {
   const [amount, setAmount] = useState(debt ? debt.amount.toString() : '');
   const [person, setPerson] = useState(debt?.person ?? '');
   const [description] = useState(debt?.description ?? '');
@@ -67,6 +69,7 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt }) =>
           type="number"
           min={debt ? '0' : '1'}
           step="1"
+          inputMode="numeric"
           required
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
@@ -150,6 +153,11 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt }) =>
           {debt ? 'Update Debt' : 'Add Debt'}
         </button>
       </div>
+      {debt && onDelete && (
+        <button type="button" onClick={onDelete} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10 hover:text-rose-300">
+          <Trash2 size={14} /> Delete debt
+        </button>
+      )}
     </form>
   );
 };

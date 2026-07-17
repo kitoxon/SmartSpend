@@ -30,6 +30,9 @@ The client key is intentionally public. Privacy comes from Supabase Auth plus Ro
 - Changes are written to the local device immediately.
 - Failed cloud writes are queued and retried when the browser reconnects or when Retry is selected in Sync & Settings.
 - Recurring occurrences use deterministic IDs, preventing duplicate entries from two devices processing the same due date.
-- Sync & Settings includes recurring-rule deletion, sign-out, sync health, and JSON backup export.
+- Sync & Settings includes learned-reminder controls, recurring-rule deletion, sign-out, sync health, and JSON backup export/merge.
+- Safe to Spend reserves upcoming recurring expenses and debt payments due; the month-end estimate uses up to three previous months rather than multiplying daily spending.
+- Debt principal and savings-goal transfers are not counted as new spending. Only debt interest is recorded as a new expense.
+- On desktop, use `Alt+E` to add an expense and `Alt+I` to add income.
 
 Reference: [Supabase passwordless email auth](https://supabase.com/docs/reference/javascript/auth-signinwithotp), [Auth access configuration](https://supabase.com/docs/guides/auth/general-configuration), and [Row Level Security](https://supabase.com/docs/guides/database/postgres/row-level-security).

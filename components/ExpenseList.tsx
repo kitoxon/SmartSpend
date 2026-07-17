@@ -3,11 +3,11 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Transaction, Category } from '../types';
 import { CATEGORY_COLORS, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '../constants';
 import { CategoryIcon } from './ui/CategoryIcon';
-import { Trash2, Search, Filter, XCircle, Calendar, ArrowUpDown } from 'lucide-react';
+import { Search, Filter, XCircle, Calendar, ArrowUpDown, ChevronRight } from 'lucide-react';
+import { isTransferLike, spendingAmountFor } from '../utils/transactions';
 
 interface ExpenseListProps {
   expenses: Transaction[];
-  onDelete: (id: string) => void;
   onEdit: (tx: Transaction) => void;
 }
 
@@ -15,7 +15,7 @@ type SortOption = 'date-new' | 'date-old' | 'amount-high' | 'amount-low';
 type DateRangeOption = 'all' | 'thisMonth' | 'lastMonth' | 'custom';
 type TypeFilterOption = 'all' | 'income' | 'expense';
 
-export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions, onDelete, onEdit }) => {
+export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions, onEdit }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<Category | 'All'>('All');
   const [sortBy, setSortBy] = useState<SortOption>('date-new');
@@ -91,12 +91,12 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
     [processedTransactions, visibleCount]
   );
 
-  const displayTotalAmount = useMemo(
-    () => displayTransactions.reduce((sum, t) => sum + t.amount, 0),
-    [displayTransactions]
-  );
-  const totalFilteredAmount = useMemo(
-    () => processedTransactions.reduce((sum, t) => sum + t.amount, 0),
+  const filteredSummary = useMemo(
+    () => processedTransactions.reduce((summary, transaction) => {
+      if (transaction.type === 'income') summary.income += transaction.amount;
+      summary.spending += spendingAmountFor(transaction);
+      return summary;
+    }, { income: 0, spending: 0 }),
     [processedTransactions]
   );
 
@@ -138,11 +138,23 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
   }, [processedTransactions.length]);
 
   const totalFilteredCount = processedTransactions.length;
+  const now = new Date();
+  const rangeLabel = dateRange === 'all'
+    ? 'All history'
+    : dateRange === 'thisMonth'
+      ? now.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+      : dateRange === 'lastMonth'
+        ? new Date(now.getFullYear(), now.getMonth() - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+        : customStart && customEnd
+          ? `${new Date(customStart).toLocaleDateString()} – ${new Date(customEnd).toLocaleDateString()}`
+          : 'Custom range';
+  const hasNonDefaultFilters = typeFilter !== 'all' || selectedCategory !== 'All' || sortBy !== 'date-new';
 
   const renderItem = (item: Transaction, showDateLabel = false) => (
-    <div
+    <button
+      type="button"
       key={item.id}
-      className="flex items-center p-4 hover:bg-zinc-900/80 transition-colors group border-b border-zinc-800 last:border-0 cursor-pointer"
+      className="flex w-full items-center p-4 text-left hover:bg-zinc-900/80 transition-colors group border-b border-zinc-800 last:border-0 cursor-pointer"
       onClick={() => onEdit(item)}
     >
       <div 
@@ -158,7 +170,7 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
       <div className="flex-1 min-w-0">
         <p className="font-bold text-sm text-zinc-200 truncate">{item.description}</p>
         <div className="flex items-center gap-2 mt-0.5">
-          <p className="text-[10px] font-medium uppercase tracking-wide truncate" style={{ color: CATEGORY_COLORS[item.category] }}>{item.category}</p>
+          <p className="text-[10px] font-medium uppercase tracking-wide truncate" style={{ color: CATEGORY_COLORS[item.category] }}>{isTransferLike(item) ? `${item.category} · transfer` : item.category}</p>
           {showDateLabel && (
             <>
               <span className="text-zinc-800 text-[10px]">•</span>
@@ -168,18 +180,13 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
         </div>
       </div>
 
-      <div className="flex flex-col items-end ml-3 shrink-0">
-        <span className={`font-bold text-sm tabular-nums ${item.type === 'income' ? 'text-white' : 'text-zinc-500'}`}>
-          {item.type === 'income' ? '+' : ''}¥{item.amount.toLocaleString()}
+      <div className="ml-3 flex shrink-0 items-center gap-2">
+        <span className={`text-sm font-bold tabular-nums ${item.type === 'income' ? 'text-emerald-300' : isTransferLike(item) ? 'text-zinc-300' : 'text-white'}`}>
+          {item.type === 'income' ? '+' : isTransferLike(item) ? '↔' : '−'}¥{item.amount.toLocaleString()}
         </span>
-        <button
-          onClick={(e) => { e.stopPropagation(); onDelete(item.id); }}
-          className="text-zinc-600 hover:text-red-400 transition-all mt-1 p-1"
-        >
-          <Trash2 size={12} />
-        </button>
+        <ChevronRight size={15} className="text-zinc-700" aria-hidden="true" />
       </div>
-    </div>
+    </button>
   );
 
   return (
@@ -204,19 +211,29 @@ export const ExpenseList: React.FC<ExpenseListProps> = ({ expenses: transactions
           </div>
           <button 
             onClick={() => setShowFilters(!showFilters)}
-            className={`p-2 rounded-lg border transition-all ${showFilters ? 'bg-zinc-100 text-black border-zinc-200' : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300'}`}
+            aria-label="Transaction filters"
+            className={`relative min-h-10 min-w-10 rounded-lg border p-2 transition-all ${showFilters ? 'bg-zinc-100 text-black border-zinc-200' : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300'}`}
           >
             <Filter size={18} />
+            {hasNonDefaultFilters && !showFilters && <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-emerald-300" />}
           </button>
         </div>
 
-        <div className="flex items-center justify-between text-[10px] text-zinc-500 px-1 mb-2">
-          <span className="font-bold">Showing {displayTransactions.length} of {totalFilteredCount}</span>
-          <div className="flex items-center gap-3">
-            <span className="text-zinc-400 font-bold tabular-nums">Total (range) ¥{totalFilteredAmount.toLocaleString()}</span>
-            <span className="text-zinc-600">Page ¥{displayTotalAmount.toLocaleString()}</span>
-            {selectedCategory !== 'All' && <span className="text-zinc-500">{selectedCategory}</span>}
+        <div className="mb-2 flex flex-col items-start gap-1 px-1 text-[10px] text-zinc-500 sm:flex-row sm:items-center sm:justify-between">
+          <span className="font-bold">{totalFilteredCount} {totalFilteredCount === 1 ? 'entry' : 'entries'} · {rangeLabel}</span>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="text-zinc-400 font-bold tabular-nums">Income ¥{filteredSummary.income.toLocaleString()}</span>
+            <span className="text-zinc-500 font-bold tabular-nums">Spent ¥{filteredSummary.spending.toLocaleString()}</span>
           </div>
+        </div>
+
+        <div className="mb-2 flex gap-1.5 overflow-x-auto px-1 pb-1">
+          <button type="button" onClick={() => setShowFilters(true)} className="whitespace-nowrap rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[10px] font-semibold text-zinc-400">
+            {rangeLabel}
+          </button>
+          {typeFilter !== 'all' && <button type="button" onClick={() => setShowFilters(true)} className="whitespace-nowrap rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[10px] font-semibold capitalize text-zinc-400">{typeFilter}</button>}
+          {selectedCategory !== 'All' && <button type="button" onClick={() => setShowFilters(true)} className="whitespace-nowrap rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[10px] font-semibold text-zinc-400">{selectedCategory}</button>}
+          {sortBy !== 'date-new' && <button type="button" onClick={() => setShowFilters(true)} className="whitespace-nowrap rounded-full border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-[10px] font-semibold text-zinc-400">{sortBy === 'date-old' ? 'Oldest' : sortBy === 'amount-high' ? 'Highest' : 'Lowest'}</button>}
         </div>
 
         {showFilters && (

@@ -1,174 +1,177 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Debt } from '../types';
-import { CheckCircle, Trash2, Calendar, CreditCard, User, Landmark, Banknote, Percent, Shield, Sword } from 'lucide-react';
+import {
+  Banknote,
+  Calendar,
+  CheckCircle,
+  ChevronDown,
+  ChevronRight,
+  CreditCard,
+  Landmark,
+  Shield,
+  User,
+} from 'lucide-react';
 import { simulateDebtPayoff } from '../utils/debtPayoff';
 
 interface DebtListProps {
   debts: Debt[];
-  onDelete: (id: string) => void;
-  onToggleStatus: (id: string) => void; 
+  onToggleStatus: (id: string) => void;
   onEdit?: (debt: Debt) => void;
 }
 
-export const DebtList: React.FC<DebtListProps> = ({ debts, onDelete, onToggleStatus, onEdit }) => {
-  const sortedDebts = [...debts].sort((a, b) => {
-    if (a.isPaid === b.isPaid) {
-      return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
-    }
-    return a.isPaid ? 1 : -1;
-  });
+const formatJPY = (amount: number) => `¥${amount.toLocaleString()}`;
 
-  const totalDebt = debts
-    .filter(d => !d.isPaid)
-    .reduce((sum, d) => sum + d.amount, 0);
-
+export const DebtList: React.FC<DebtListProps> = ({ debts, onToggleStatus, onEdit }) => {
+  const [showPaid, setShowPaid] = useState(false);
   const activeDebts = useMemo(
-    () => debts.filter((d) => d.type === 'payable' && !d.isPaid && d.amount > 0),
-    [debts]
+    () => debts
+      .filter((debt) => debt.type === 'payable' && !debt.isPaid && debt.amount > 0)
+      .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()),
+    [debts],
   );
+  const paidDebts = useMemo(
+    () => debts
+      .filter((debt) => debt.isPaid || debt.amount <= 0)
+      .sort((a, b) => new Date(b.dueDate).getTime() - new Date(a.dueDate).getTime()),
+    [debts],
+  );
+  const totalDebt = activeDebts.reduce((sum, debt) => sum + debt.amount, 0);
 
   const projectionStartDate = useMemo(() => {
     const now = new Date();
     const validDueDates = activeDebts
-      .map((d) => new Date(d.dueDate))
-      .filter((dt) => !isNaN(dt.getTime()))
+      .map((debt) => new Date(debt.dueDate))
+      .filter((date) => !Number.isNaN(date.getTime()))
       .sort((a, b) => a.getTime() - b.getTime());
     const earliest = validDueDates[0];
-    if (earliest && earliest.getTime() > now.getTime()) return earliest;
-    return now;
+    return earliest && earliest.getTime() > now.getTime() ? earliest : now;
   }, [activeDebts]);
 
-  const payoffPlan = useMemo(() => {
-    return simulateDebtPayoff(activeDebts, {
-      strategy: 'dueDate',
-      startDate: projectionStartDate,
-    });
-  }, [activeDebts, projectionStartDate]);
+  const payoffPlan = useMemo(() => simulateDebtPayoff(activeDebts, {
+    strategy: 'dueDate',
+    startDate: projectionStartDate,
+  }), [activeDebts, projectionStartDate]);
 
-  const getCategoryIcon = (cat: string) => {
-    switch(cat) {
-        case 'Credit Card': return <CreditCard size={10} />;
-        case 'Loan': return <Landmark size={10} />;
-        case 'Bank': return <Landmark size={10} />;
-        case 'Personal': return <User size={10} />;
-        default: return <Banknote size={10} />;
+  const dueThisMonth = useMemo(() => {
+    const now = new Date();
+    return activeDebts.reduce((sum, debt) => {
+      const due = new Date(debt.dueDate);
+      if (Number.isNaN(due.getTime())) return sum;
+      const isDue = due <= now || (due.getFullYear() === now.getFullYear() && due.getMonth() === now.getMonth());
+      return isDue ? sum + Math.min(debt.amount, debt.minimumPayment ?? debt.amount) : sum;
+    }, 0);
+  }, [activeDebts]);
+
+  const getCategoryIcon = (category: string) => {
+    switch (category) {
+      case 'Credit Card': return <CreditCard size={10} />;
+      case 'Loan':
+      case 'Bank': return <Landmark size={10} />;
+      case 'Personal': return <User size={10} />;
+      default: return <Banknote size={10} />;
     }
   };
 
-  const formatJPY = (amount: number) => `¥${amount.toLocaleString()}`;
-
-  const getPayoffProjection = (debt: Debt) => {
-    if (debt.amount <= 0) return null;
-    if (payoffPlan.warning) return { text: payoffPlan.warning };
-    const entry = payoffPlan.perDebt[debt.id];
-    if (!entry) {
-      const minPay = debt.minimumPayment ?? 0;
-      if (minPay <= 0) return { text: 'Set monthly payment' };
-      return null;
-    }
-    return { text: `Paid off by ${entry.payoffDate.toLocaleDateString('default', { month: 'long', year: 'numeric' })}` };
+  const getDueState = (dueDate: string) => {
+    const due = new Date(dueDate);
+    if (Number.isNaN(due.getTime())) return null;
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+    const days = Math.round((dueDay.getTime() - today.getTime()) / 86_400_000);
+    if (days < 0) return { label: `Overdue by ${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'}`, tone: 'overdue' as const };
+    if (days === 0) return { label: 'Due today', tone: 'soon' as const };
+    if (days <= 10) return { label: `Due in ${days} days`, tone: 'soon' as const };
+    return null;
   };
 
   return (
     <div className="space-y-4 pb-24">
-      {/* Summary Card - Minimal */}
-      <div className="bg-zinc-800/50 rounded-lg p-5 text-zinc-100 border border-zinc-800 relative overflow-hidden">
-        <h3 className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest mb-1">Total Liability</h3>
-        <div className="text-3xl font-bold text-white tracking-tight">{formatJPY(totalDebt)}</div>
-        {activeDebts.length > 0 && !payoffPlan.warning && payoffPlan.payoffDateLabel && (
-          <div className="mt-2 text-[11px] text-zinc-400 flex items-center gap-1.5">
-            <Calendar size={12} /> Debt-free by {payoffPlan.payoffDateLabel}
-          </div>
-        )}
-      </div>
+      <section className="relative overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/70 p-4 text-zinc-100">
+        <h3 className="mb-1 text-[10px] font-bold uppercase tracking-widest text-zinc-500">Total liability</h3>
+        <div className="text-2xl font-bold tracking-tight text-white tabular-nums">{formatJPY(totalDebt)}</div>
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-zinc-400">
+          {activeDebts.length > 0 && !payoffPlan.warning && payoffPlan.payoffDateLabel && (
+            <span className="flex items-center gap-1.5"><Calendar size={12} /> Debt-free by {payoffPlan.payoffDateLabel}</span>
+          )}
+          {dueThisMonth > 0 && <span>Due this month <strong className="text-zinc-200 tabular-nums">{formatJPY(dueThisMonth)}</strong></span>}
+        </div>
+      </section>
 
-      {/* List */}
-      {sortedDebts.length === 0 ? (
-        <div className="text-center py-20 text-zinc-600">
+      {activeDebts.length === 0 ? (
+        <div className="py-20 text-center text-zinc-600">
           <Shield size={32} className="mx-auto mb-3 opacity-20" />
           <p className="text-sm">No active debts recorded.</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {sortedDebts.map((debt) => {
-            const projection = getPayoffProjection(debt);
+        <div className="space-y-2">
+          {activeDebts.map((debt) => {
+            const dueState = getDueState(debt.dueDate);
+            const urgencyClass = dueState?.tone === 'overdue'
+              ? 'border-rose-500/40 bg-rose-500/[0.06]'
+              : dueState?.tone === 'soon'
+                ? 'border-zinc-700 bg-zinc-900/70'
+                : 'border-zinc-800 bg-zinc-900/60';
             return (
-            <div 
-              key={debt.id} 
-              className={`p-4 rounded-lg border transition-all flex flex-col gap-3 group relative overflow-hidden cursor-pointer ${
-                debt.isPaid 
-                  ? 'opacity-50 border-zinc-800 bg-zinc-900' 
-                  : 'bg-zinc-800/40 border-zinc-800'
-              }`}
-              onClick={() => onEdit?.(debt)}
-            >
-              <div className="flex items-start justify-between w-full gap-3">
-                 <div className="flex items-start gap-3 min-w-0 flex-1">
-                    <div className={`mt-1 p-1.5 rounded-md shrink-0 ${debt.isPaid ? 'bg-zinc-800 text-zinc-600' : 'bg-zinc-800 text-zinc-400'}`}>
-                        {debt.isPaid ? <CheckCircle size={16} /> : <Shield size={16} />}
-                    </div>
-                    
+              <article key={debt.id} className={`rounded-xl border p-3 transition ${urgencyClass}`}>
+                <button type="button" onClick={() => onEdit?.(debt)} className="w-full text-left">
+                  <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <h4 className={`font-bold text-sm truncate ${debt.isPaid ? 'text-zinc-500 line-through' : 'text-zinc-200'}`}>
-                          {debt.person}
-                        </h4>
-                      </div>
-                      
-                      <div className="flex flex-wrap gap-2 mt-1">
-                        <span className="text-[9px] uppercase tracking-wide inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 border border-zinc-700/50">
-                            {getCategoryIcon(debt.debtCategory)} {debt.debtCategory}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h4 className="truncate text-sm font-bold text-white">{debt.person}</h4>
+                        <span className="inline-flex items-center gap-1 rounded border border-zinc-700/60 bg-zinc-800 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-zinc-400">
+                          {getCategoryIcon(debt.debtCategory)} {debt.debtCategory}
+                          {(debt.interestRate ?? 0) > 0 && <> · {debt.interestRate}%</>}
                         </span>
-                        {debt.interestRate && !debt.isPaid && (
-                           <span className="text-[9px] bg-zinc-800 text-zinc-400 px-1.5 py-0.5 rounded border border-zinc-700/50 flex items-center">
-                             <Percent size={8} className="mr-0.5" /> {debt.interestRate}%
-                           </span>
-                        )}
+                        {dueState && <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold ${dueState.tone === 'overdue' ? 'bg-rose-500/15 text-rose-300' : 'bg-zinc-800 text-zinc-300'}`}>
+                          {dueState.label}
+                        </span>}
                       </div>
                     </div>
-                 </div>
-
-                 <div className="text-right shrink-0">
-                    <div className={`text-base font-bold mb-1 tabular-nums ${debt.isPaid ? 'text-zinc-600' : 'text-white'}`}>
-                        {formatJPY(debt.amount)}
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-lg font-bold text-white tabular-nums">{formatJPY(debt.amount)}</span>
+                      <ChevronRight size={16} className="text-zinc-600" aria-hidden="true" />
                     </div>
-                    <p className="text-[10px] text-zinc-500">{new Date(debt.dueDate).toLocaleDateString()}</p>
-                 </div>
-              </div>
-
-              {!debt.isPaid && (
-                <div className="border-t border-zinc-800/50 pt-3 mt-1 flex items-center justify-between">
-                   <button 
-                        onClick={(e) => { e.stopPropagation(); onDelete(debt.id); }}
-                        className="text-zinc-600 hover:text-red-400 text-xs flex items-center gap-1"
-                      >
-                        <Trash2 size={12} /> Delete
-                   </button>
-                  
-                  <div className="flex items-center gap-3">
-                     {debt.minimumPayment && (
-                        <div className="flex flex-col text-[10px] text-zinc-500 tabular-nums">
-                            <span>Min: {formatJPY(debt.minimumPayment)}</span>
-                            {projection && (
-                              <span className="flex items-center gap-1 text-zinc-400">
-                                <Calendar size={10} /> {projection.text}
-                              </span>
-                            )}
-                        </div>
-                      )}
-                      <button
-                        onClick={(e) =>{e.stopPropagation(); onToggleStatus(debt.id)}}
-                        className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide px-3 py-1.5 rounded bg-zinc-100 text-zinc-950 hover:bg-white transition-all"
-                      >
-                        <Sword size={10} /> Pay
-                      </button>
                   </div>
+                </button>
+
+                <div className="mt-2 flex items-center justify-between gap-3 border-t border-white/5 pt-2">
+                  <p className="min-w-0 truncate text-[10px] text-zinc-500">
+                    {debt.minimumPayment && <span>Min {formatJPY(debt.minimumPayment)}</span>}
+                    {debt.minimumPayment && <span> · </span>}
+                    <span>Due {new Date(debt.dueDate).toLocaleDateString()}</span>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => onToggleStatus(debt.id)}
+                    className="min-h-9 shrink-0 rounded-lg bg-white px-4 text-[10px] font-bold uppercase tracking-wide text-black transition hover:bg-zinc-200 active:scale-[0.98]"
+                  >
+                    Pay
+                  </button>
                 </div>
-              )}
-            </div>
+              </article>
             );
           })}
         </div>
+      )}
+
+      {paidDebts.length > 0 && (
+        <section className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/40">
+          <button type="button" onClick={() => setShowPaid((value) => !value)} className="flex min-h-12 w-full items-center justify-between px-4 text-left text-xs font-semibold text-zinc-500 transition hover:text-zinc-300">
+            <span className="flex items-center gap-2"><CheckCircle size={14} /> {paidDebts.length} paid off</span>
+            <ChevronDown size={15} className={`transition-transform ${showPaid ? 'rotate-180' : ''}`} />
+          </button>
+          {showPaid && (
+            <div className="border-t border-zinc-800">
+              {paidDebts.map((debt) => (
+                <button key={debt.id} type="button" onClick={() => onEdit?.(debt)} className="flex min-h-12 w-full items-center justify-between border-b border-zinc-800 px-4 text-left last:border-0 hover:bg-zinc-900">
+                  <span className="text-xs text-zinc-500 line-through">{debt.person}</span>
+                  <span className="flex items-center gap-2 text-xs font-semibold text-zinc-600">Paid <ChevronRight size={14} /></span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
       )}
     </div>
   );

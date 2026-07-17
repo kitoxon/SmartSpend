@@ -1,96 +1,76 @@
 import React from 'react';
 import { Goal } from '../types';
-import { Target, Trophy, Plus, Trash2, AlertCircle, CalendarClock, CheckCircle2, Flag } from 'lucide-react';
+import { CalendarClock, ChevronRight, Plus, Target, Trophy } from 'lucide-react';
+import { GoalIcon } from './ui/GoalIcon';
 
 interface GoalListProps {
   goals: Goal[];
-  onDelete: (id: string) => void;
   onAddFundsClick: (id: string) => void;
   onEdit: (goal: Goal) => void;
 }
 
-export const GoalList: React.FC<GoalListProps> = ({ goals, onDelete, onAddFundsClick, onEdit }) => {
-  const formatJPY = (val: number) => `¥${val.toLocaleString()}`;
+const formatJPY = (value: number) => `¥${value.toLocaleString()}`;
 
+export const GoalList: React.FC<GoalListProps> = ({ goals, onAddFundsClick, onEdit }) => {
   if (goals.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 text-zinc-600">
+      <div className="flex h-64 flex-col items-center justify-center text-zinc-600">
         <Target size={32} className="mb-2 opacity-20" />
         <p className="text-sm">No goals set.</p>
       </div>
     );
   }
 
-  const getProjection = (goal: Goal) => {
+  const projectionFor = (goal: Goal) => {
     if (!goal.monthlyContribution || goal.monthlyContribution <= 0) return null;
     const remaining = Math.max(0, goal.targetAmount - goal.currentAmount);
-    if (remaining === 0) return { date: new Date(), isOnTrack: true };
-
     const monthsNeeded = Math.ceil(remaining / goal.monthlyContribution);
-    const today = new Date();
-    const projectedDate = new Date(today.setMonth(today.getMonth() + monthsNeeded));
-    
-    let isOnTrack = true;
-    if (goal.deadline) {
-      isOnTrack = projectedDate <= new Date(goal.deadline);
-    }
-    return { date: projectedDate, isOnTrack };
+    const date = new Date();
+    date.setMonth(date.getMonth() + monthsNeeded);
+    const isOnTrack = !goal.deadline || date <= new Date(goal.deadline);
+    return { date, isOnTrack };
   };
 
   return (
-    <div className="space-y-4 pb-24">
+    <div className="space-y-3 pb-24">
       {goals.map((goal) => {
         const percentage = Math.min(100, Math.round((goal.currentAmount / goal.targetAmount) * 100));
-        const projection = getProjection(goal);
-        
+        const projection = projectionFor(goal);
+        const planText = percentage >= 100
+          ? 'Goal reached'
+          : goal.monthlyContribution && goal.monthlyContribution > 0
+            ? `${formatJPY(goal.monthlyContribution)}/month${projection ? ` · ${projection.isOnTrack ? 'Finish' : 'Behind plan'} ${projection.date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}` : ''}`
+            : percentage === 0
+              ? 'Not started · add a monthly plan'
+              : `${percentage}% complete`;
+
         return (
-          <div key={goal.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-5 shadow-sm relative overflow-hidden group cursor-pointer" onClick={() => onEdit(goal)}>
-            <div className="flex justify-between items-start mb-4 relative z-10">
-              <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-md border ${percentage >= 100 ? 'bg-zinc-100 border-zinc-200 text-zinc-900' : 'bg-zinc-800 border-zinc-700 text-zinc-400'}`}>
-                  {percentage >= 100 ? <Trophy size={18} /> : <Flag size={18} />}
-                </div>
-                <div>
-                  <h3 className="font-bold text-base text-zinc-100 tracking-tight">{goal.name}</h3>
-                  <div className="flex items-center gap-2 mt-1">
-                    {goal.deadline && (
-                      <span className="text-[10px] uppercase tracking-wide text-zinc-500 bg-zinc-800/50 px-1.5 py-0.5 rounded flex items-center gap-1 border border-zinc-700/50">
-                         <CalendarClock size={10} /> {new Date(goal.deadline).toLocaleDateString()}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <button onClick={(e) => { e.stopPropagation(); onDelete(goal.id); }} className="text-zinc-600 hover:text-zinc-400 p-1"><Trash2 size={14} /></button>
-            </div>
+          <article key={goal.id} className="rounded-xl border border-zinc-800 bg-zinc-900/65 p-3.5">
+            <button type="button" onClick={() => onEdit(goal)} className="flex w-full items-center gap-3 text-left">
+              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${percentage >= 100 ? 'border-zinc-200 bg-white text-black' : 'border-zinc-700 bg-zinc-800 text-zinc-400'}`}>
+                {percentage >= 100 ? <Trophy size={16} /> : <GoalIcon icon={goal.icon} size={16} />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-bold text-zinc-100">{goal.name}</span>
+                {goal.deadline && <span className="mt-0.5 flex items-center gap-1 text-[10px] text-zinc-500"><CalendarClock size={10} /> {new Date(goal.deadline).toLocaleDateString()}</span>}
+              </span>
+              <span className="shrink-0 text-right">
+                <span className="block text-sm font-bold text-white tabular-nums">{formatJPY(goal.currentAmount)}</span>
+                <span className="block text-[10px] text-zinc-600">of {formatJPY(goal.targetAmount)}</span>
+              </span>
+              <ChevronRight size={15} className="shrink-0 text-zinc-700" />
+            </button>
 
-            <div className="mb-2 relative z-10">
-              <div className="flex justify-between text-sm mb-2 font-medium">
-                <span className="text-white font-bold tabular-nums">{formatJPY(goal.currentAmount)}</span>
-                <span className="text-zinc-500 tabular-nums">{formatJPY(goal.targetAmount)}</span>
-              </div>
-              <div className="h-2 w-full bg-zinc-800 rounded-full overflow-hidden">
-                <div className={`h-full transition-all duration-500 ${percentage >= 100 ? 'bg-white' : 'bg-zinc-500'}`} style={{ width: `${percentage}%` }} />
-              </div>
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-zinc-800"><div className={`h-full rounded-full ${percentage >= 100 ? 'bg-white' : 'bg-emerald-400'}`} style={{ width: `${percentage}%` }} /></div>
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <p className={`min-w-0 truncate text-[10px] ${projection && !projection.isOnTrack ? 'text-rose-300' : 'text-zinc-500'}`}>{planText}</p>
+              {percentage < 100 && (
+                <button type="button" onClick={() => onAddFundsClick(goal.id)} className="flex min-h-9 shrink-0 items-center gap-1 rounded-lg bg-white px-3 text-[10px] font-bold uppercase tracking-wide text-black hover:bg-zinc-200">
+                  <Plus size={11} /> Add funds
+                </button>
+              )}
             </div>
-
-            {/* Projection Status */}
-            {projection && percentage < 100 && (
-              <div className={`mt-3 p-2 rounded border text-[10px] flex items-center gap-2 ${
-                projection.isOnTrack ? 'bg-zinc-800/30 border-zinc-800 text-zinc-400' : 'bg-zinc-800/30 border-zinc-800 text-zinc-500'
-              }`}>
-                {projection.isOnTrack ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
-                <p>{projection.isOnTrack ? "On Track" : "At Risk"} • Finish by <span className="font-bold text-zinc-300">{projection.date.toLocaleString('default', { month: 'short', year: 'numeric' })}</span></p>
-              </div>
-            )}
-
-            <div className="flex justify-between items-center mt-4 pt-3 border-t border-zinc-800 relative z-10">
-              <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">{percentage}% COMPLETE</span>
-              <button onClick={(e) => {e.stopPropagation(); onAddFundsClick(goal.id)}} className="flex items-center gap-1 px-3 py-1.5 bg-zinc-100 hover:bg-white rounded text-[10px] font-bold text-zinc-950 border border-zinc-200 uppercase tracking-wide">
-                <Plus size={10} /> Add Funds
-              </button>
-            </div>
-          </div>
+          </article>
         );
       })}
     </div>
