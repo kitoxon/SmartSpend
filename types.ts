@@ -38,7 +38,11 @@ export interface RecurringTransaction {
   frequency: 'weekly' | 'monthly';
   nextDue: string;
   anchorDay?: number;
-  transactionTemplate: Omit<Transaction, 'id' | 'date'>;
+  transactionTemplate: Omit<Transaction, 'id' | 'date'> & {
+    // Variable bills stay estimated until the user confirms their amount/date.
+    // This lives in the JSON template, so it syncs without a schema migration.
+    requiresConfirmation?: boolean;
+  };
 }
 
 // Alias for backward compatibility

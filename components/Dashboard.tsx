@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CircleAlert,
   Lightbulb,
+  ReceiptText,
   Sparkles,
   TrendingUp,
   Wallet,
@@ -32,6 +33,8 @@ interface DashboardProps {
   onPayDebt: (id: string) => void;
   onOpenGoals: () => void;
   onAddGoalFunds: (id: string) => void;
+  onConfirmExpectedBill: (id: string) => void;
+  onPostponeExpectedBill: (id: string) => void;
 }
 
 const formatJPY = (amount: number) => `¥${Math.round(Math.abs(amount)).toLocaleString()}`;
@@ -75,12 +78,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onPayDebt,
   onOpenGoals,
   onAddGoalFunds,
+  onConfirmExpectedBill,
+  onPostponeExpectedBill,
 }) => {
   const currentMonth = monthStart(new Date());
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [showForecastDetails, setShowForecastDetails] = useState(false);
+  const [showAllExpectedBills, setShowAllExpectedBills] = useState(false);
   const isCurrentMonth = monthKey(selectedMonth) === monthKey(currentMonth);
   const selectedEnd = monthEnd(selectedMonth);
+  const todayEnd = new Date();
+  todayEnd.setHours(23, 59, 59, 999);
 
   const selectedTransactions = useMemo(
     () => transactions.filter((transaction) => {
@@ -161,6 +169,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const reserved = isCurrentMonth ? scheduled.expenses + debtDueThisMonth : 0;
   const spentShare = income > 0 ? Math.min(100, (expenses / income) * 100) : expenses > 0 ? 100 : 0;
   const reservedShare = income > 0 ? Math.min(100 - spentShare, (reserved / income) * 100) : 0;
+
+  const expectedBills = useMemo(() => recurringRules
+    .filter((rule) => {
+      if (!rule.transactionTemplate.requiresConfirmation || rule.transactionTemplate.type !== 'expense') return false;
+      const due = new Date(rule.nextDue);
+      return !Number.isNaN(due.getTime()) && due <= todayEnd;
+    })
+    .sort((a, b) => new Date(a.nextDue).getTime() - new Date(b.nextDue).getTime()), [recurringRules, todayEnd]);
+  const visibleExpectedBills = showAllExpectedBills ? expectedBills : expectedBills.slice(0, 3);
 
   const expenseChange = previousTotals.expenses > 0
     ? Math.round(((expenses - previousTotals.expenses) / previousTotals.expenses) * 100)
@@ -316,8 +333,48 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </section>
           )}
 
+          {isCurrentMonth && expectedBills.length > 0 && (
+            <section className="order-3 rounded-xl border border-zinc-700 bg-zinc-900/80 p-4">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="flex items-center gap-2 text-xs font-bold text-zinc-200"><ReceiptText size={14} /> Bills to confirm <span className="rounded-full bg-zinc-800 px-1.5 py-0.5 text-[9px] text-zinc-400">{expectedBills.length}</span></h2>
+                  <p className="mt-1 text-[10px] text-zinc-600">Estimates are reserved, but are not expenses yet.</p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {visibleExpectedBills.map((rule) => {
+                  const due = new Date(rule.nextDue);
+                  const dueStart = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+                  const todayStart = new Date();
+                  todayStart.setHours(0, 0, 0, 0);
+                  const overdueDays = Math.max(0, Math.floor((todayStart.getTime() - dueStart.getTime()) / 86_400_000));
+                  const description = rule.transactionTemplate.description.replace(/^\(Recurring\)\s*/i, '');
+                  return (
+                    <article key={rule.id} className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+                      <div className="flex items-center gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-bold text-zinc-200">{description}</p>
+                          <p className="mt-1 text-[10px] text-zinc-600">
+                            Estimated {formatJPY(rule.transactionTemplate.amount)} · {overdueDays > 0 ? `${overdueDays}d overdue` : 'Expected today'}
+                          </p>
+                        </div>
+                        <button type="button" onClick={() => onPostponeExpectedBill(rule.id)} className="min-h-9 shrink-0 rounded-lg px-2 text-[10px] font-semibold text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300">Not yet</button>
+                        <button type="button" onClick={() => onConfirmExpectedBill(rule.id)} className="min-h-9 shrink-0 rounded-lg bg-white px-3 text-[10px] font-bold uppercase tracking-wide text-black hover:bg-zinc-200">Confirm</button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+              {expectedBills.length > 3 && (
+                <button type="button" onClick={() => setShowAllExpectedBills((value) => !value)} className="mt-2 min-h-9 w-full text-[10px] font-semibold text-zinc-500 hover:text-zinc-300">
+                  {showAllExpectedBills ? 'Show less' : `Show ${expectedBills.length - 3} more`}
+                </button>
+              )}
+            </section>
+          )}
+
           {quickEntries.length > 0 && (
-            <section className="order-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <section className="order-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
               <div className="mb-3 flex items-center gap-2 text-xs font-bold text-zinc-300"><Sparkles size={14} /> Quick entries</div>
               <div className="grid gap-2 sm:grid-cols-3">
                 {quickEntries.map((entry) => (
@@ -331,7 +388,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           )}
 
           {homeGoals.length > 0 && (
-            <section className="order-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <section className="order-5 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
               <div className="mb-3 flex items-center justify-between gap-3"><h2 className="text-xs font-bold text-zinc-300">Goals</h2><button type="button" onClick={onOpenGoals} className="flex min-h-9 items-center gap-1 px-1 text-[10px] font-semibold text-zinc-500 hover:text-white">View all <ArrowRight size={12} /></button></div>
               <div className="grid gap-2 sm:grid-cols-2">
                 {homeGoals.map((goal) => {
@@ -348,7 +405,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </section>
           )}
 
-          <section className="order-7 rounded-xl border border-zinc-800 bg-zinc-900/70 p-5">
+          <section className="order-8 rounded-xl border border-zinc-800 bg-zinc-900/70 p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div><h2 className="flex items-center gap-2 text-sm font-bold text-zinc-200"><TrendingUp size={16} /> Six-month cash flow</h2><div className="mt-1 flex flex-wrap items-center gap-3 text-[10px] text-zinc-500"><span>Ending in {monthLabel}</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-sm bg-white" /> Income</span><span className="flex items-center gap-1"><i className="h-2 w-2 rounded-sm bg-zinc-500" /> Spending</span></div></div>
               <button type="button" onClick={onOpenTransactions} className="flex items-center gap-1 text-xs font-semibold text-zinc-400 hover:text-white">Transactions <ArrowRight size={13} /></button>
@@ -359,7 +416,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
         <aside className="contents lg:block lg:space-y-5">
           {monthlyInsights.length > 0 && (
-            <section className="order-5 rounded-xl border border-zinc-800 bg-zinc-900/70 p-5">
+            <section className="order-6 rounded-xl border border-zinc-800 bg-zinc-900/70 p-5">
               <h2 className="mb-3 flex items-center gap-2 text-sm font-bold text-zinc-200"><Lightbulb size={16} /> This month explained</h2>
               <div className="space-y-3">{monthlyInsights.map((insight) => <p key={insight} className="border-l-2 border-zinc-700 pl-3 text-xs leading-relaxed text-zinc-400">{insight}</p>)}</div>
               <p className={`mt-4 rounded-lg px-3 py-2.5 text-xs ${expenseChange !== null && expenseChange > 0 ? 'bg-rose-500/10 text-rose-300' : 'bg-zinc-950 text-zinc-400'}`}>{comparisonText}</p>
@@ -367,7 +424,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           )}
 
           {nextDebt && (
-            <section className="order-6 rounded-xl border border-zinc-800 bg-zinc-900/70 p-5">
+            <section className="order-7 rounded-xl border border-zinc-800 bg-zinc-900/70 p-5">
               <button type="button" onClick={onOpenDebts} className="flex w-full items-start justify-between gap-4 text-left"><div><p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Next debt payment</p><p className="mt-1 text-2xl font-bold text-white tabular-nums">{formatJPY(Math.min(nextDebt.amount, nextDebt.minimumPayment ?? nextDebt.amount))}</p></div><ArrowRight size={18} className="mt-1 text-zinc-600" /></button>
               <div className="mt-4 flex items-center justify-between gap-3 border-t border-zinc-800 pt-4"><span className="flex items-center gap-1.5 text-xs text-zinc-500"><CalendarClock size={13} /> {nextDebt.person} · {new Date(nextDebt.dueDate).toLocaleDateString()}</span><button type="button" onClick={() => onPayDebt(nextDebt.id)} className="min-h-10 rounded-lg bg-white px-5 text-[11px] font-bold uppercase tracking-wide text-black hover:bg-zinc-200">Pay</button></div>
             </section>

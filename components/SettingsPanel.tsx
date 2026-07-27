@@ -12,6 +12,7 @@ interface SettingsPanelProps {
   remindersEnabled: boolean;
   onRetrySync: () => void;
   onDeleteRecurring: (id: string) => void;
+  onToggleRecurringConfirmation: (id: string) => void;
   onExport: () => void;
   onImport: (file: File) => Promise<string>;
   onToggleReminders: () => void;
@@ -38,6 +39,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   remindersEnabled,
   onRetrySync,
   onDeleteRecurring,
+  onToggleRecurringConfirmation,
   onExport,
   onImport,
   onToggleReminders,
@@ -143,8 +145,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       </section>
 
       <section>
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 flex items-center gap-1.5"><Repeat size={12} /> Recurring transactions</p>
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-zinc-500"><Repeat size={12} /> Recurring transactions</p>
+            <p className="mt-1 text-[10px] text-zinc-600">Use Confirm for bills whose amount changes.</p>
+          </div>
           <span className="text-[10px] text-zinc-600">{recurringRules.length}</span>
         </div>
         {recurringRules.length === 0 ? (
@@ -155,9 +160,23 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               <div key={rule.id} className="flex items-center justify-between gap-3 p-3 bg-zinc-950 border-b border-zinc-800 last:border-b-0">
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-zinc-200 truncate">{rule.transactionTemplate.description.replace(/^\(Recurring\)\s*/i, '')}</p>
-                  <p className="text-[10px] text-zinc-600 mt-1 capitalize">{rule.frequency} · next {new Date(rule.nextDue).toLocaleDateString()}</p>
+                  <p className="text-[10px] text-zinc-600 mt-1 capitalize">{rule.frequency} · next {new Date(rule.nextDue).toLocaleDateString()} · {rule.transactionTemplate.requiresConfirmation ? 'confirm first' : 'auto-add'}</p>
                 </div>
-                <button onClick={() => onDeleteRecurring(rule.id)} className="p-2 text-zinc-600 hover:text-red-400" aria-label="Delete recurring transaction"><Trash2 size={14} /></button>
+                <div className="flex shrink-0 items-center gap-1">
+                  {rule.transactionTemplate.type === 'expense' && (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={Boolean(rule.transactionTemplate.requiresConfirmation)}
+                      aria-label={`${rule.transactionTemplate.requiresConfirmation ? 'Auto-add' : 'Confirm'} ${rule.transactionTemplate.description.replace(/^\(Recurring\)\s*/i, '')}`}
+                      onClick={() => onToggleRecurringConfirmation(rule.id)}
+                      className={`min-h-9 rounded-lg border px-2 text-[9px] font-bold uppercase tracking-wide transition ${rule.transactionTemplate.requiresConfirmation ? 'border-zinc-500 bg-zinc-800 text-zinc-200' : 'border-zinc-800 bg-black text-zinc-600'}`}
+                    >
+                      {rule.transactionTemplate.requiresConfirmation ? 'Confirm' : 'Auto'}
+                    </button>
+                  )}
+                  <button onClick={() => onDeleteRecurring(rule.id)} className="p-2 text-zinc-600 hover:text-red-400" aria-label="Delete recurring transaction"><Trash2 size={14} /></button>
+                </div>
               </div>
             ))}
           </div>

@@ -19,7 +19,7 @@ import { GoalForm } from './components/GoalForm';
 import { AuthScreen } from './components/AuthScreen';
 import { SettingsPanel } from './components/SettingsPanel';
 import { Modal } from './components/ui/Modal';
-import { addMonthsClamped, localDateInputToIso } from './utils/date';
+import { addDaysClamped, addMonthsClamped, getNextRecurringDate, localDateInputToIso } from './utils/date';
 import { supabase } from './services/supabaseClient';
 import { LayoutDashboard, List as ListIcon, Plus, ArrowRightLeft, Target, DollarSign, Landmark, Settings, Cloud, CloudOff, RefreshCw, MoreHorizontal, Download, ChevronRight } from 'lucide-react';
 
@@ -45,6 +45,7 @@ const App: React.FC = () => {
   const [habitPatterns, setHabitPatternsState] = useState<ReturnType<typeof buildHabitPatterns>>([]);
   const [remindersEnabled, setRemindersEnabled] = useState(true);
   const [expensePrefill, setExpensePrefill] = useState<Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>> | null>(null);
+  const [confirmingBill, setConfirmingBill] = useState<RecurringTransaction | null>(null);
   const [quickAddNotice, setQuickAddNotice] = useState<Transaction | null>(null);
   const habitsInitialized = useRef(false);
   const dataLoadInFlight = useRef<Promise<void> | null>(null);
@@ -84,10 +85,12 @@ const App: React.FC = () => {
   }, [reminderSettingKey]);
 
   const openTransactionModal = (
-    prefill: Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>> | null = null
+    prefill: Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>> | null = null,
+    billToConfirm: RecurringTransaction | null = null,
   ) => {
     setEditingTransaction(null);
     setExpensePrefill(prefill);
+    setConfirmingBill(billToConfirm);
     setIsExpenseModalOpen(true);
   };
 
@@ -95,6 +98,7 @@ const App: React.FC = () => {
     setIsExpenseModalOpen(false);
     setEditingTransaction(null);
     setExpensePrefill(null);
+    setConfirmingBill(null);
   };
 
   useEffect(() => () => {
@@ -303,10 +307,73 @@ const App: React.FC = () => {
       setTransactions(prev => [newTx, ...prev]);
       await saveTransaction(newTx);
     }
+
+    if (!existingId && confirmingBill) {
+      const due = new Date(confirmingBill.nextDue);
+      if (!Number.isNaN(due.getTime())) {
+        const anchorDay = confirmingBill.anchorDay ?? due.getDate();
+        await saveRecurringTransaction({
+          ...confirmingBill,
+          anchorDay,
+          nextDue: getNextRecurringDate(due, confirmingBill.frequency, anchorDay).toISOString(),
+        });
+      }
+    }
     setRecurringRules(await getRecurringTransactions());
     setEditingTransaction(null);
     setExpensePrefill(null);
+    setConfirmingBill(null);
     setIsExpenseModalOpen(false);
+  };
+
+  const handleConfirmExpectedBill = (id: string) => {
+    const rule = recurringRules.find((candidate) => candidate.id === id);
+    if (!rule) return;
+    openTransactionModal({
+      type: 'expense',
+      amount: rule.transactionTemplate.amount,
+      description: rule.transactionTemplate.description.replace(/^\(Recurring\)\s*/i, ''),
+      category: rule.transactionTemplate.category,
+      date: new Date(rule.nextDue).toLocaleDateString('en-CA'),
+    }, rule);
+  };
+
+  const handlePostponeExpectedBill = async (id: string) => {
+    const rule = recurringRules.find((candidate) => candidate.id === id);
+    if (!rule) return;
+    const due = new Date(rule.nextDue);
+    if (Number.isNaN(due.getTime())) return;
+    // An old overdue bill should snooze from today, not remain overdue after
+    // merely adding three days to its original estimated date.
+    const now = new Date();
+    const postponeFrom = due < now ? now : due;
+    const updated = { ...rule, nextDue: addDaysClamped(postponeFrom, 3).toISOString() };
+    setRecurringRules((previous) => previous.map((candidate) => candidate.id === id ? updated : candidate));
+    try {
+      await saveRecurringTransaction(updated);
+    } catch (error) {
+      setRecurringRules((previous) => previous.map((candidate) => candidate.id === id ? rule : candidate));
+      setLoadError(error instanceof Error ? error.message : 'Could not postpone this bill.');
+    }
+  };
+
+  const handleToggleRecurringConfirmation = async (id: string) => {
+    const rule = recurringRules.find((candidate) => candidate.id === id);
+    if (!rule || rule.transactionTemplate.type !== 'expense') return;
+    const updated: RecurringTransaction = {
+      ...rule,
+      transactionTemplate: {
+        ...rule.transactionTemplate,
+        requiresConfirmation: !rule.transactionTemplate.requiresConfirmation || undefined,
+      },
+    };
+    setRecurringRules((previous) => previous.map((candidate) => candidate.id === id ? updated : candidate));
+    try {
+      await saveRecurringTransaction(updated);
+    } catch (error) {
+      setRecurringRules((previous) => previous.map((candidate) => candidate.id === id ? rule : candidate));
+      setLoadError(error instanceof Error ? error.message : 'Could not update this recurring bill.');
+    }
   };
 
   const handleQuickAdd = async (prefill: Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>>) => {
@@ -708,6 +775,8 @@ const App: React.FC = () => {
               onPayDebt={handleOpenPayDebt}
               onOpenGoals={() => setCurrentView('goals')}
               onAddGoalFunds={handleOpenAddFunds}
+              onConfirmExpectedBill={handleConfirmExpectedBill}
+              onPostponeExpectedBill={(id) => void handlePostponeExpectedBill(id)}
             />
           )}
         {currentView === 'list' && <ExpenseList expenses={transactions} onEdit={(tx) => { setExpensePrefill(null); setEditingTransaction(tx); setIsExpenseModalOpen(true); }} />}
@@ -783,7 +852,7 @@ const App: React.FC = () => {
         </div>
       </Modal>
 
-      <Modal isOpen={isExpenseModalOpen} onClose={closeTransactionModal} title={editingTransaction ? `Edit ${editingTransaction.type}` : `Add ${expensePrefill?.type ?? 'expense'}`}>
+      <Modal isOpen={isExpenseModalOpen} onClose={closeTransactionModal} title={editingTransaction ? `Edit ${editingTransaction.type}` : confirmingBill ? 'Confirm bill' : `Add ${expensePrefill?.type ?? 'expense'}`}>
         <ExpenseForm
           transaction={editingTransaction ?? undefined}
           prefill={editingTransaction ? undefined : expensePrefill ?? undefined}
@@ -905,6 +974,7 @@ const App: React.FC = () => {
             setIsSettingsModalOpen(false);
             setPendingDelete({ type: 'recurring', id });
           }}
+          onToggleRecurringConfirmation={(id) => void handleToggleRecurringConfirmation(id)}
           onExport={handleExport}
           onImport={handleImport}
           onToggleReminders={handleToggleReminders}

@@ -408,6 +408,10 @@ export const processRecurringTransactions = async (): Promise<Transaction[]> => 
   now.setHours(23, 59, 59, 999);
 
   for (const rule of recurringRules) {
+    // Variable bills are forecast from their recurring rule but must not become
+    // real expenses until the user confirms the actual amount and date.
+    if (rule.transactionTemplate.requiresConfirmation) continue;
+
     let nextDue = new Date(rule.nextDue);
     if (Number.isNaN(nextDue.getTime())) continue;
     const anchorDay = rule.anchorDay ?? nextDue.getDate();
@@ -417,11 +421,13 @@ export const processRecurringTransactions = async (): Promise<Transaction[]> => 
     while (nextDue <= now) {
       modified = true;
       const occurrenceDate = nextDue.toISOString();
+      const transactionTemplate = { ...rule.transactionTemplate };
+      delete transactionTemplate.requiresConfirmation;
       const transaction: Transaction = {
         id: await deterministicUuid(`smartspend:${rule.id}:${occurrenceDate}`),
         date: occurrenceDate,
         created_at: new Date().toISOString(),
-        ...rule.transactionTemplate,
+        ...transactionTemplate,
       };
       ruleTransactions.push(transaction);
       newTransactions.push(transaction);

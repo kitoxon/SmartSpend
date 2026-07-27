@@ -36,6 +36,7 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
   const [date, setDate] = useState(transaction ? transaction.date.split('T')[0] : prefillDate);
   const [isRecurring, setIsRecurring] = useState(false);
   const [frequency, setFrequency] = useState<'weekly' | 'monthly'>('monthly');
+  const [requiresConfirmation, setRequiresConfirmation] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duplicateSignature, setDuplicateSignature] = useState<string | null>(null);
   const [showAllCategories, setShowAllCategories] = useState(false);
@@ -63,6 +64,7 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
 
   const handleTypeChange = (nextType: TransactionType) => {
     setType(nextType);
+    if (nextType === 'income') setRequiresConfirmation(false);
     setShowAllCategories(false);
     const allowed = nextType === 'expense' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
     if (!allowed.includes(category)) setCategory(defaultCategory(nextType));
@@ -108,7 +110,13 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
          frequency,
          nextDue: getNextRecurringDate(baseDate, frequency, anchorDay).toISOString(),
          anchorDay,
-         transactionTemplate: { amount: numericAmount, description: `(Recurring) ${description.trim()}`, category, type }
+         transactionTemplate: {
+           amount: numericAmount,
+           description: `(Recurring) ${description.trim()}`,
+           category,
+           type,
+           requiresConfirmation: type === 'expense' && requiresConfirmation ? true : undefined,
+         }
        };
        await saveRecurringTransaction(rule);
     }
@@ -294,6 +302,36 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
                <button type="button" onClick={() => setFrequency('weekly')} className={`flex-1 py-2 rounded text-[10px] font-bold uppercase tracking-wide ${frequency === 'weekly' ? 'bg-zinc-700 text-white border border-zinc-600' : 'bg-zinc-950 text-zinc-600 border border-zinc-800'}`}>Weekly</button>
                <button type="button" onClick={() => setFrequency('monthly')} className={`flex-1 py-2 rounded text-[10px] font-bold uppercase tracking-wide ${frequency === 'monthly' ? 'bg-zinc-700 text-white border border-zinc-600' : 'bg-zinc-950 text-zinc-600 border border-zinc-800'}`}>Monthly</button>
             </div>
+            {type === 'expense' && (
+              <div className="mt-3 border-t border-zinc-800 pt-3">
+                <label className="mb-2 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">Future bills</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRequiresConfirmation(false)}
+                    aria-pressed={!requiresConfirmation}
+                    className={`rounded-lg border px-3 py-2.5 text-left transition ${!requiresConfirmation ? 'border-zinc-500 bg-zinc-700 text-white' : 'border-zinc-800 bg-zinc-950 text-zinc-500'}`}
+                  >
+                    <span className="block text-[10px] font-bold uppercase tracking-wide">Auto-add</span>
+                    <span className="mt-1 block text-[10px] opacity-70">Exact amount</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRequiresConfirmation(true)}
+                    aria-pressed={requiresConfirmation}
+                    className={`rounded-lg border px-3 py-2.5 text-left transition ${requiresConfirmation ? 'border-zinc-400 bg-zinc-100 text-zinc-950' : 'border-zinc-800 bg-zinc-950 text-zinc-500'}`}
+                  >
+                    <span className="block text-[10px] font-bold uppercase tracking-wide">Confirm first</span>
+                    <span className="mt-1 block text-[10px] opacity-70">Amount varies</span>
+                  </button>
+                </div>
+                <p className="mt-2 text-[10px] leading-relaxed text-zinc-600">
+                  {requiresConfirmation
+                    ? 'The estimate reserves money in your forecast, then waits on Home for the real amount and date.'
+                    : 'Future entries will be recorded automatically on their estimated date.'}
+                </p>
+              </div>
+            )}
          </div>
       )}
 
