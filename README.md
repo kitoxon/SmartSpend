@@ -15,7 +15,7 @@ A private, installable finance tracker for PC and smartphone. Data is cached loc
 6. If the project already contains SmartSpend rows, run [`supabase/claim_legacy_data.sql`](supabase/claim_legacy_data.sql) once. With one Auth user it selects your account automatically; with multiple users, set `owner_email` in the script first. This assigns old rows to your account.
 7. Since this is a one-person app, disable **Allow new users to sign up** in Supabase Auth configuration after your account exists. Existing users can still sign in.
 
-If Sync & Settings reports `column recurring_transactions.next_due does not exist`, run [`supabase/repair_recurring_schema.sql`](supabase/repair_recurring_schema.sql) once, then select **Retry sync** in the app.
+If Sync & Settings reports that `next_due` does not exist or that legacy `nextdue` cannot be null, run [`supabase/repair_recurring_schema.sql`](supabase/repair_recurring_schema.sql) once, then select **Retry sync** in the app.
 
 The client key is intentionally public. Privacy comes from Supabase Auth plus Row Level Security, which restricts every row to its `user_id`.
 

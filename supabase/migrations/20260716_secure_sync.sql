@@ -51,6 +51,83 @@ alter table public.recurring_transactions add column if not exists next_due time
 alter table public.recurring_transactions add column if not exists anchor_day integer;
 alter table public.recurring_transactions add column if not exists transaction_template jsonb;
 
+-- Migrate the column names used by early SmartSpend schemas. PostgreSQL folded
+-- their unquoted camelCase names to lowercase, leaving required legacy columns
+-- that reject writes using the current snake_case names.
+do $$
+declare
+  legacy_column text;
+begin
+  for legacy_column in
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'recurring_transactions'
+      and column_name in ('nextdue', 'nextDue')
+  loop
+    execute format(
+      'update public.recurring_transactions
+       set next_due = coalesce(next_due, %I::timestamptz)
+       where next_due is null',
+      legacy_column
+    );
+    execute format(
+      'alter table public.recurring_transactions alter column %I drop not null',
+      legacy_column
+    );
+  end loop;
+
+  for legacy_column in
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'recurring_transactions'
+      and column_name in ('anchorday', 'anchorDay')
+  loop
+    execute format(
+      'update public.recurring_transactions
+       set anchor_day = coalesce(anchor_day, %I::integer)
+       where anchor_day is null',
+      legacy_column
+    );
+    execute format(
+      'alter table public.recurring_transactions alter column %I drop not null',
+      legacy_column
+    );
+  end loop;
+
+  for legacy_column in
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'recurring_transactions'
+      and column_name in ('transactiontemplate', 'transactionTemplate')
+  loop
+    execute format(
+      'update public.recurring_transactions
+       set transaction_template = coalesce(transaction_template, %I::jsonb)
+       where transaction_template is null',
+      legacy_column
+    );
+    execute format(
+      'alter table public.recurring_transactions alter column %I drop not null',
+      legacy_column
+    );
+  end loop;
+
+  if not exists (
+    select 1 from public.recurring_transactions where next_due is null
+  ) then
+    execute 'alter table public.recurring_transactions alter column next_due set not null';
+  end if;
+
+  if not exists (
+    select 1 from public.recurring_transactions where transaction_template is null
+  ) then
+    execute 'alter table public.recurring_transactions alter column transaction_template set not null';
+  end if;
+end $$;
+
 create table if not exists public.habit_patterns (
   habit_id text not null,
   category text not null,
