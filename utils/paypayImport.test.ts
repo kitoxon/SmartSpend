@@ -69,6 +69,8 @@ describe('merchants', () => {
     expect(categorizeMerchant('セブン-イレブン - 本町')).toBe('Convenience stores');
     expect(categorizeMerchant('ロイヤルフードサービス - ロイヤルホスト')).toBe('Restaurants and cafes');
     expect(categorizeMerchant('SDベンディング')).toBe('Vending machines');
+    expect(categorizeMerchant('空手道場 - 本部')).toBe('Sports and hobbies');
+    expect(categorizeMerchant('福岡ソフトバンクホークス - ドーム')).toBe('Entertainment');
     expect(categorizeMerchant('Unknown shop')).toBe('Other');
     expect(merchantBrand('ローソン - 西口')).toBe('ローソン');
   });

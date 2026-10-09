@@ -13,7 +13,7 @@ export const INCOME_CATEGORIES = [
 
 export const EXPENSE_CATEGORIES = [
   Category.Food, Category.Transport, Category.Housing, Category.Utilities, 
-  Category.Entertainment, Category.Health, Category.Shopping, Category.Groceries, 
+  Category.Entertainment, Category.Sports, Category.Health, Category.Shopping, Category.Groceries, 
   Category.Debt, Category.Savings, Category.Other
 ];
 

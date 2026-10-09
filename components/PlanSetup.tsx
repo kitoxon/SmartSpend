@@ -24,6 +24,10 @@ interface PlanSetupProps {
 type BillDraft = Omit<Bill, 'amount'> & { amount: string };
 
 const DAYS = Array.from({ length: 31 }, (_, index) => index + 1);
+const MONTHS = Array.from({ length: 12 }, (_, index) => ({
+  value: index + 1,
+  label: new Date(2026, index, 1).toLocaleDateString(undefined, { month: 'long' }),
+}));
 const SHIFT_LABELS: Record<BusinessDayShift, string> = {
   none: 'Keep the date',
   next: 'Move later',
@@ -126,7 +130,7 @@ export const PlanSetup: React.FC<PlanSetupProps> = ({ data, legacyRecurringCount
       <section className="space-y-2">
         <div>
           <h4 className="flex items-center gap-1.5 text-sm font-medium text-ink"><Landmark size={15} /> Transfer bills</h4>
-          <p className="mt-0.5 text-xs leading-relaxed text-ink-3">Paid by bank transfer, not by card. For bills that vary, enter a typical amount and confirm it each month.</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-ink-3">Paid by bank transfer, not by card. A yearly bill, like an annual fee, is counted in the cycle it falls in. For bills that vary, enter a typical amount and confirm it when it comes.</p>
         </div>
         {bills.map((bill) => (
           <div key={bill.id} className="space-y-2 rounded-xl border border-line p-3">
@@ -136,6 +140,29 @@ export const PlanSetup: React.FC<PlanSetupProps> = ({ data, legacyRecurringCount
               <button type="button" onClick={() => setBills((list) => list.filter((item) => item.id !== bill.id))} aria-label={`Remove ${bill.name}`} className="flex h-10 w-10 items-center justify-center rounded-lg text-ink-3 hover:bg-subtle hover:text-bad">
                 <Trash2 size={16} />
               </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <span className="mb-1 block text-xs text-ink-3">Repeats</span>
+                <select
+                  value={bill.frequency ?? 'monthly'}
+                  onChange={(event) => updateBill(bill.id, event.target.value === 'yearly'
+                    ? { frequency: 'yearly', month: bill.month ?? new Date().getMonth() + 1 }
+                    : { frequency: 'monthly', month: undefined })}
+                  className="field px-2 text-sm"
+                >
+                  <option value="monthly">Every month</option>
+                  <option value="yearly">Every year</option>
+                </select>
+              </label>
+              {bill.frequency === 'yearly' && (
+                <label className="block">
+                  <span className="mb-1 block text-xs text-ink-3">Month</span>
+                  <select value={bill.month ?? 1} onChange={(event) => updateBill(bill.id, { month: Number(event.target.value) })} className="field px-2 text-sm">
+                    {MONTHS.map((month) => <option key={month.value} value={month.value}>{month.label}</option>)}
+                  </select>
+                </label>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-2">
               <label className="block">
@@ -154,7 +181,7 @@ export const PlanSetup: React.FC<PlanSetupProps> = ({ data, legacyRecurringCount
             </div>
             <label className="flex cursor-pointer items-center gap-2 text-[13px] text-ink-2">
               <input type="checkbox" checked={bill.variable} onChange={(event) => updateBill(bill.id, { variable: event.target.checked })} className="h-4 w-4 accent-[rgb(var(--accent))]" />
-              Amount varies each month
+              Amount varies each {bill.frequency === 'yearly' ? 'year' : 'month'}
             </label>
           </div>
         ))}

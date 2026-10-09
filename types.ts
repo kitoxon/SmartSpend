@@ -6,6 +6,7 @@ export enum Category {
   Housing = 'Housing',
   Utilities = 'Utilities',
   Entertainment = 'Entertainment',
+  Sports = 'Sports and hobbies',
   Health = 'Health',
   Shopping = 'Shopping',
   Groceries = 'Groceries',
@@ -115,6 +116,9 @@ export interface Bill {
   variable: boolean;
   active: boolean;
   sortOrder: number;
+  // Monthly unless set. A yearly bill is due once, in `month` (1–12).
+  frequency?: 'monthly' | 'yearly';
+  month?: number;
 }
 
 export interface BillPayment {

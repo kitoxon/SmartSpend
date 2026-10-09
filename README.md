@@ -8,7 +8,8 @@ A private, installable money planner for PC and smartphone, organized around pay
 - **Payday check-in.** Confirm the salary and the money left before it arrived, enter each card's bill, update any transfer bill that changed, and choose how much to set aside. Runway shows what is free for the cycle and a per-day amount.
 - **Credit cards.** Each month's purchases close at month end and are paid the next month on the card's payment day, moved to the next business day. Card purchases are never logged one by one; each card is one bill per month.
 - **Splitting a card bill.** If a bill can't be paid in full, part of it becomes an installment debt. Its monthly principal and interest are counted inside that card's following bills, not as a separate payment, and paying the bill pays the installment.
-- **Transfer bills.** Rent, utilities and fees paid by bank transfer. Bills whose amount varies keep an estimate until confirmed.
+- **Transfer bills.** Rent, utilities and fees paid by bank transfer, repeating every month or once a year (for example an annual fee in April). A yearly bill is counted in the cycle its due date falls in. Bills whose amount varies keep an estimate until confirmed.
+- **One-off transfers.** Irregular payments like an exam or tournament entry fee are logged as expenses with the cash pad; "Sports and hobbies" groups them.
 - **Cash spending.** Only cash and debit spending is logged, with the quick number pad (+). Moving money into a savings goal is not spending.
 - **Starting mid-cycle.** "Start from today" uses today's balance and ignores bills and spending before today, so tracking can begin before the next payday.
 - **Today's budget.** What was left this morning, spread over the days to payday. It stays fixed through the day, so you can see how much of today's amount is left.

@@ -4,7 +4,7 @@ import { Category } from '../../types';
 import {
   Utensils, CarFront, Home, Zap, Film, HeartPulse, ShoppingBag,
   ShoppingCart, PiggyBank, CircleDashed, Banknote,
-  Clock, Wallet, Laptop, Gift, TrendingUp
+  Clock, Wallet, Laptop, Gift, TrendingUp, Medal
 } from 'lucide-react';
 import { CreditCardIcon } from './CreditCardIcon';
 
@@ -23,6 +23,7 @@ export const CategoryIcon: React.FC<CategoryIconProps> = ({ category, size = 18,
     [Category.Housing]: Home,
     [Category.Utilities]: Zap,
     [Category.Entertainment]: Film,
+    [Category.Sports]: Medal,
     [Category.Health]: HeartPulse,
     [Category.Shopping]: ShoppingBag,
     [Category.Groceries]: ShoppingCart,

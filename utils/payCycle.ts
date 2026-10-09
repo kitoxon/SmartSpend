@@ -45,6 +45,7 @@ export const billDueDatesIn = (bill: Bill, start: LocalDate, end: LocalDate) => 
   const dates: LocalDate[] = [];
   // Look one month either side so a business-day shift across the boundary is still found.
   for (let month = shiftMonthKey(monthKeyOf(start), -1); month <= shiftMonthKey(monthKeyOf(end), 1); month = shiftMonthKey(month, 1)) {
+    if (bill.frequency === 'yearly' && Number(month.slice(5)) !== bill.month) continue;
     const due = shiftToBusinessDay(dayOfMonth(month, bill.dueDay), bill.shift);
     if (isWithin(due, start, end)) dates.push(due);
   }

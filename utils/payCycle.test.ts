@@ -59,6 +59,15 @@ describe('due dates', () => {
     const december = getCycle('2026-12');
     expect(billDueDatesIn(karate, december.start, december.end)).toEqual(['2026-12-28']); // Dec 27 is Sunday
   });
+
+  it('places a yearly bill only in the cycle of its month', () => {
+    const annual: Bill = { ...karate, id: 'annual', name: 'Karate annual fee', amount: 12_000, dueDay: 10, frequency: 'yearly', month: 4 };
+    const cycleWith = (key: string) => getCycle(key);
+    // April 10, 2027 is a Saturday, so it moves to Monday April 12 — in the cycle that starts on March 19.
+    expect(billDueDatesIn(annual, cycleWith('2027-03').start, cycleWith('2027-03').end)).toEqual(['2027-04-12']);
+    expect(billDueDatesIn(annual, cycleWith('2027-04').start, cycleWith('2027-04').end)).toEqual([]);
+    expect(billDueDatesIn(annual, cycleWith('2026-10').start, cycleWith('2026-10').end)).toEqual([]);
+  });
 });
 
 describe('cycle plan', () => {
