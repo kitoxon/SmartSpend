@@ -6,12 +6,12 @@ import {
   CheckCircle,
   ChevronDown,
   ChevronRight,
-  CreditCard,
   Landmark,
   Shield,
   User,
 } from 'lucide-react';
 import { simulateDebtPayoff } from '../utils/debtPayoff';
+import { CreditCardIcon } from './ui/CreditCardIcon';
 
 interface DebtListProps {
   debts: Debt[];
@@ -65,7 +65,7 @@ export const DebtList: React.FC<DebtListProps> = ({ debts, cardNames, onToggleSt
 
   const getCategoryIcon = (category: string) => {
     switch (category) {
-      case 'Credit Card': return <CreditCard size={10} />;
+      case 'Credit Card': return <CreditCardIcon size={10} />;
       case 'Loan':
       case 'Bank': return <Landmark size={10} />;
       case 'Personal': return <User size={10} />;

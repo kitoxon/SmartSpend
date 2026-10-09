@@ -1,7 +1,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
-  ArrowLeftRight, ChevronRight, Cloud, CloudOff, CreditCard, Download, HandCoins, History, Home, MoreHorizontal, Plus, RefreshCw,
+  ArrowLeftRight, ChevronRight, Cloud, CloudOff, Download, HandCoins, History, Home, MoreHorizontal, Plus, RefreshCw,
   Settings, SlidersHorizontal, Target,
 } from 'lucide-react';
 import {
@@ -40,6 +40,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { BalanceCheck } from './components/BalanceCheck';
 import { Modal } from './components/ui/Modal';
 import { AmountInput } from './components/ui/AmountInput';
+import { CreditCardIcon } from './components/ui/CreditCardIcon';
 
 const ExpenseList = React.lazy(() => import('./components/ExpenseList').then((m) => ({ default: m.ExpenseList })));
 const DebtList = React.lazy(() => import('./components/DebtList').then((m) => ({ default: m.DebtList })));
@@ -724,7 +725,7 @@ const App: React.FC = () => {
               <Plus size={22} />
             </button>
           </div>
-          {navItem('cards', 'Cards', <CreditCard size={20} />)}
+          {navItem('cards', 'Cards', <CreditCardIcon size={20} />)}
           <button type="button" onClick={() => setIsMoreMenuOpen(true)} className={`flex flex-col items-center justify-center gap-0.5 rounded-lg py-1.5 text-[11px] transition ${['goals', 'debts', 'history'].includes(currentView) ? 'text-ink' : 'text-ink-3 hover:text-ink-2'}`}>
             <MoreHorizontal size={20} />
             More

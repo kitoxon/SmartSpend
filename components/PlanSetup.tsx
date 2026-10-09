@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { CreditCard, Landmark, Plus, Trash2 } from 'lucide-react';
+import { Landmark, Plus, Trash2 } from 'lucide-react';
 import { Bill, BusinessDayShift, Card, PlannerData, PlannerSettings } from '../types';
 import { getPayday } from '../utils/payCycle';
 import { formatWeekdayDate, monthKeyOf, shiftMonthKey, todayLocalDate } from '../utils/jpCalendar';
 import { parseAmount } from '../utils/format';
 import { isPlannerConfigured, suggestedSetup } from '../services/planner';
 import { AmountInput } from './ui/AmountInput';
+import { CreditCardIcon } from './ui/CreditCardIcon';
 
 export interface PlanSetupResult {
   settings: PlannerSettings;
@@ -103,7 +104,7 @@ export const PlanSetup: React.FC<PlanSetupProps> = ({ data, legacyRecurringCount
 
       <section className="space-y-2">
         <div>
-          <h4 className="flex items-center gap-1.5 text-sm font-medium text-ink"><CreditCard size={15} /> Credit cards</h4>
+          <h4 className="flex items-center gap-1.5 text-sm font-medium text-ink"><CreditCardIcon size={15} /> Credit cards</h4>
           <p className="mt-0.5 text-xs leading-relaxed text-ink-3">Each month's purchases are paid the next month on this day, or the next business day.</p>
         </div>
         {cards.map((card) => (

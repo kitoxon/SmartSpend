@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  ArrowLeftRight, ArrowRight, Check, ChevronLeft, ChevronRight, CreditCard, Droplets, Home, Landmark, Plus, Sparkles, Zap,
+  ArrowLeftRight, ArrowRight, Check, ChevronLeft, ChevronRight, Droplets, Home, Landmark, Plus, Sparkles, Zap,
 } from 'lucide-react';
 import { Transaction } from '../types';
 import { CyclePlan, Obligation, cycleBreakdown, unusuallyHighBy } from '../utils/payCycle';
@@ -8,6 +8,7 @@ import { addDays, diffDays, formatShortDate, formatWeekdayDate, fromDate, monthK
 import { formatSignedYen, formatYen } from '../utils/format';
 import { CategoryIcon } from './ui/CategoryIcon';
 import { APP_NAME } from '../constants';
+import { CreditCardIcon } from './ui/CreditCardIcon';
 
 interface CycleHomeProps {
   plan: CyclePlan;
@@ -28,7 +29,7 @@ interface CycleHomeProps {
 
 const ObligationIcon: React.FC<{ obligation: Obligation }> = ({ obligation }) => {
   const props = { size: 15, 'aria-hidden': true, className: 'shrink-0 text-ink-3' } as const;
-  if (obligation.kind === 'card') return <CreditCard {...props} />;
+  if (obligation.kind === 'card') return <CreditCardIcon {...props} />;
   if (obligation.kind === 'debt') return <ArrowLeftRight {...props} />;
   if (/water|水道/i.test(obligation.label)) return <Droplets {...props} />;
   if (/rent|家賃/i.test(obligation.label)) return <Home {...props} />;
