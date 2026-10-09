@@ -8,6 +8,15 @@ export const isLegacyPrincipalPayment = (transaction: SpendingRecord) =>
 export const isTransferLike = (transaction: SpendingRecord) =>
   transaction.category === Category.Savings || isLegacyPrincipalPayment(transaction);
 
+/** Note on entries created by a balance check to match the real bank balance. */
+export const BALANCE_ADJUSTMENT_NOTE = 'Balance adjustment';
+
+export const isBalanceAdjustment = (transaction: Pick<Transaction, 'description'>) => transaction.description === BALANCE_ADJUSTMENT_NOTE;
+
+/** Money that actually left the account. Moving money into savings goals does not count. */
+export const cashOutflowFor = (transaction: SpendingRecord) =>
+  transaction.type === 'expense' && transaction.category !== Category.Savings ? transaction.amount : 0;
+
 export const spendingAmountFor = (transaction: SpendingRecord) => {
   if (transaction.type !== 'expense') return 0;
   if (transaction.category === Category.Savings) return 0;

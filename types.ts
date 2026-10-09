@@ -65,6 +65,117 @@ export interface Debt {
   // New fields for Smart Handling
   interestRate?: number; // Annual Interest Rate (%)
   minimumPayment?: number; // Monthly commitment
+
+  // Set when the debt is a split card bill. Its monthly payment is then
+  // collected inside that card's bill instead of being paid separately.
+  cardId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Pay-cycle planner. Dates are local 'YYYY-MM-DD' strings; months are 'YYYY-MM'.
+
+export type BusinessDayShift = 'none' | 'next' | 'previous';
+
+export interface PlannerSettings {
+  paydayDay: number;
+  defaultSavings: number;
+  defaultSavingsGoalId?: string;
+  // Whether money set aside stays in the spending account (true) or is moved out.
+  savingsInAccount?: boolean;
+}
+
+export interface Card {
+  id: string;
+  name: string;
+  paymentDay: number; // Day of the month after usage; moves to the next business day
+  sortOrder: number;
+  archived?: boolean;
+}
+
+export interface CardStatement {
+  id: string;
+  cardId: string;
+  usageMonth: string; // Month the purchases were made
+  amount: number; // Total bill from the card company, installments included
+  installment: number; // Part of `amount` that repays split debts on this card
+  splitAmount: number; // Part of `amount` moved into a new installment debt
+  splitDebtId?: string;
+  paidAt?: string;
+  // Principal taken off linked debts when this bill was marked paid, so that
+  // un-marking it can restore their balances exactly.
+  appliedPayments?: { debtId: string; principal: number; previousDueDate: string }[];
+}
+
+export interface Bill {
+  id: string;
+  name: string;
+  amount: number; // Exact amount, or the estimate when `variable`
+  dueDay: number | 'last';
+  shift: BusinessDayShift;
+  variable: boolean;
+  active: boolean;
+  sortOrder: number;
+}
+
+export interface BillPayment {
+  id: string;
+  billId: string;
+  dueDate: string;
+  amount: number;
+  confirmed: boolean;
+  paidAt?: string;
+}
+
+export interface PayCycleRecord {
+  id: string;
+  key: string; // Payday month
+  salary: number;
+  carryover: number; // Money left before the salary arrived
+  savings: number; // Set aside at check-in
+  trackingFrom?: string; // Cycle joined part-way: ignore earlier bills and spending
+  savingsGoalId?: string;
+  // What this check-in added to a goal, so editing it can adjust the goal exactly.
+  savingsApplied?: { goalId: string; amount: number };
+  checkedInAt: string;
+}
+
+/** Latest "used so far" total for a card's purchases in a month, typed from the card's app. */
+export interface CardUsage {
+  id: string;
+  cardId: string;
+  usageMonth: string;
+  amount: number;
+  asOf: string;
+}
+
+/**
+ * Where a card's month of purchases went, from an imported history (PayPay).
+ * For understanding a bill only: it never becomes expenses in the plan.
+ */
+export interface CardBreakdown {
+  id: string;
+  cardId: string;
+  usageMonth: string;
+  source: 'paypay';
+  importedAt: string;
+  firstDate: string;
+  lastDate: string;
+  payments: number;
+  charged: number; // Charged to this card
+  paidOtherWays: number; // PayPay Points and Balance, not on the card
+  categories: { label: string; amount: number; count: number }[];
+  places: { label: string; amount: number; count: number }[];
+}
+
+export interface PlannerData {
+  settings: PlannerSettings;
+  cards: Card[];
+  bills: Bill[];
+  statements: CardStatement[];
+  billPayments: BillPayment[];
+  cycles: PayCycleRecord[];
+  cardUsage: CardUsage[];
+  cardBreakdowns: CardBreakdown[];
 }
 
 export interface Goal {
@@ -94,4 +205,4 @@ export interface DebtForecast {
   actionPlan: string[];
 }
 
-export type ViewState = 'dashboard' | 'list' | 'debts' | 'goals';
+export type ViewState = 'home' | 'list' | 'cards' | 'debts' | 'goals' | 'history';

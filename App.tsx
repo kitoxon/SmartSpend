@@ -1,128 +1,112 @@
-
-import React, { useState, useEffect, useRef, Suspense, useCallback } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { ViewState, Transaction, Debt, Goal, Category, RecurringTransaction } from './types';
-import { 
-  getTransactions, saveTransaction, deleteTransaction, 
-  getDebts, saveDebt, deleteDebt,
-  getGoals, saveGoal, deleteGoal,
-  getRecurringTransactions, saveRecurringTransaction, deleteRecurringTransaction,
-  processRecurringTransactions, syncPendingChanges,
-  subscribeToSyncState, getSyncSnapshot, clearLocalFinancialData,
-  SyncSnapshot,
+import {
+  ArrowLeftRight, ChevronRight, Cloud, CloudOff, CreditCard, Download, History, Home, List as ListIcon, MoreHorizontal, Plus, RefreshCw,
+  Settings, SlidersHorizontal, Target,
+} from 'lucide-react';
+import {
+  Bill, BillPayment, Card, CardBreakdown, CardStatement, CardUsage, Category, Debt, Goal, PayCycleRecord, RecurringTransaction, Transaction, ViewState,
+} from './types';
+import {
+  PlannerKind, PlannerRecord, SyncSnapshot,
+  clearLocalFinancialData, deleteDebt, deleteGoal, deletePlannerRecord, deleteRecurringTransaction, deleteTransaction,
+  getDebts, getGoals, getPlannerRecords, getRecurringTransactions, getSyncSnapshot, getTransactions,
+  processRecurringTransactions, saveDebt, saveGoal, savePlannerRecord, saveRecurringTransaction, saveTransaction,
+  subscribeToSyncState, syncPendingChanges,
 } from './services/storageService';
-import { buildHabitPatterns, findDueHabitReminder, HabitReminderCandidate, HabitReminderState } from './services/habitService';
-import { getHabitPatterns, getHabitReminderState, saveHabitPatterns, saveHabitReminderState } from './services/habitStorageService';
+import {
+  CardBillInput, SETTINGS_RECORD_ID, buildCardBill, isPlannerConfigured, markCardBillPaid, toPlannerData, unmarkCardBillPaid,
+} from './services/planner';
+import {
+  Obligation, billPaymentId, buildCyclePlan, cardDueDate, cardUsageId, cycleForDate, cycleRecordId, getCycle, monthlyInterest, statementId,
+  suggestedCarryover,
+} from './utils/payCycle';
+import { monthsBetween, shiftMonthKey, todayLocalDate } from './utils/jpCalendar';
+import { BALANCE_ADJUSTMENT_NOTE } from './utils/transactions';
+import { addMonthsClamped } from './utils/date';
+import { formatYen } from './utils/format';
+import { APP_NAME } from './constants';
+import { supabase } from './services/supabaseClient';
+import { AuthScreen } from './components/AuthScreen';
+import { CycleHome } from './components/CycleHome';
+import { CashEntry } from './components/CashEntry';
+import { PaydayCheckin, CheckinResult } from './components/PaydayCheckin';
+import { ObligationEditor } from './components/ObligationEditor';
+import { PlanSetup, PlanSetupResult } from './components/PlanSetup';
 import { ExpenseForm } from './components/ExpenseForm';
 import { DebtForm } from './components/DebtForm';
 import { GoalForm } from './components/GoalForm';
-import { AuthScreen } from './components/AuthScreen';
 import { SettingsPanel } from './components/SettingsPanel';
+import { BalanceCheck } from './components/BalanceCheck';
 import { Modal } from './components/ui/Modal';
-import { addDaysClamped, addMonthsClamped, getNextRecurringDate, localDateInputToIso } from './utils/date';
-import { supabase } from './services/supabaseClient';
-import { LayoutDashboard, List as ListIcon, Plus, ArrowRightLeft, Target, DollarSign, Landmark, Settings, Cloud, CloudOff, RefreshCw, MoreHorizontal, Download, ChevronRight } from 'lucide-react';
+import { AmountInput } from './components/ui/AmountInput';
 
-const Dashboard = React.lazy(() => import('./components/Dashboard').then(m => ({ default: m.Dashboard })));
-const ExpenseList = React.lazy(() => import('./components/ExpenseList').then(m => ({ default: m.ExpenseList })));
-const DebtList = React.lazy(() => import('./components/DebtList').then(m => ({ default: m.DebtList })));
-const GoalList = React.lazy(() => import('./components/GoalList').then(m => ({ default: m.GoalList })));
+const ExpenseList = React.lazy(() => import('./components/ExpenseList').then((m) => ({ default: m.ExpenseList })));
+const DebtList = React.lazy(() => import('./components/DebtList').then((m) => ({ default: m.DebtList })));
+const GoalList = React.lazy(() => import('./components/GoalList').then((m) => ({ default: m.GoalList })));
+const CardsView = React.lazy(() => import('./components/CardsView').then((m) => ({ default: m.CardsView })));
+const CycleHistory = React.lazy(() => import('./components/CycleHistory').then((m) => ({ default: m.CycleHistory })));
+
+type TransactionPrefill = Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>>;
+type PendingDelete = { type: 'transaction' | 'debt' | 'goal' | 'recurring'; id: string };
+
+const errorText = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
 
 const App: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [debts, setDebts] = useState<Debt[]>([]);
+  const [debts, setDebtsState] = useState<Debt[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [recurringRules, setRecurringRules] = useState<RecurringTransaction[]>([]);
-  const [currentView, setCurrentView] = useState<ViewState>('dashboard');
+  const [plannerRecords, setPlannerRecordsState] = useState<PlannerRecord[]>([]);
+  // Planner actions write several linked records in sequence, so they read the
+  // latest values from refs rather than from a render's closure.
+  const debtsRef = useRef<Debt[]>([]);
+  const recordsRef = useRef<PlannerRecord[]>([]);
+
+  const [currentView, setCurrentView] = useState<ViewState>('home');
+  const [cycleOffset, setCycleOffset] = useState(0);
+  const [today, setToday] = useState(todayLocalDate());
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(!supabase);
   const [session, setSession] = useState<Session | null>(null);
   const [syncState, setSyncState] = useState<SyncSnapshot>(getSyncSnapshot());
-
-  const [habitReminder, setHabitReminder] = useState<HabitReminderCandidate | null>(null);
-  const [habitStateById, setHabitStateById] = useState<Record<string, HabitReminderState>>({});
-  const [habitPatterns, setHabitPatternsState] = useState<ReturnType<typeof buildHabitPatterns>>([]);
-  const [remindersEnabled, setRemindersEnabled] = useState(true);
-  const [expensePrefill, setExpensePrefill] = useState<Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>> | null>(null);
-  const [confirmingBill, setConfirmingBill] = useState<RecurringTransaction | null>(null);
-  const [quickAddNotice, setQuickAddNotice] = useState<Transaction | null>(null);
-  const habitsInitialized = useRef(false);
   const dataLoadInFlight = useRef<Promise<void> | null>(null);
-  const quickAddTimer = useRef<number | null>(null);
-  
-  // Modal states
+
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
-  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [isCashOpen, setIsCashOpen] = useState(false);
+  const [isSetupOpen, setIsSetupOpen] = useState(false);
+  const [checkinMode, setCheckinMode] = useState<'payday' | 'today' | null>(null);
+  const [editingObligation, setEditingObligation] = useState<Obligation | null>(null);
+  const [isBalanceOpen, setIsBalanceOpen] = useState(false);
+  const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
+  const [transactionPrefill, setTransactionPrefill] = useState<TransactionPrefill | null>(null);
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [isDebtModalOpen, setIsDebtModalOpen] = useState(false);
+  const [editingDebt, setEditingDebt] = useState<Debt | null>(null);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
-  const [isAddFundsModalOpen, setIsAddFundsModalOpen] = useState(false);
+  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [fundAmountToAdd, setFundAmountToAdd] = useState('');
-  const [isPayDebtModalOpen, setIsPayDebtModalOpen] = useState(false);
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [fundError, setFundError] = useState<string | null>(null);
   const [selectedDebtId, setSelectedDebtId] = useState<string | null>(null);
   const [debtPaymentAmount, setDebtPaymentAmount] = useState('');
   const [debtPaymentError, setDebtPaymentError] = useState<string | null>(null);
-  const [fundError, setFundError] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<{ type: 'transaction' | 'debt' | 'goal' | 'recurring'; id: string } | null>(null);
-  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
-  const [editingDebt, setEditingDebt] = useState<Debt | null>(null);
-  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  const [notice, setNotice] = useState<Transaction | null>(null);
+  const noticeTimer = useRef<number | null>(null);
 
-  const todayLocal = () => new Date().toLocaleDateString('en-CA');
-  const addDaysLocal = (isoDate: string, days: number) => {
-    const dt = new Date(isoDate);
-    if (isNaN(dt.getTime())) return isoDate;
-    dt.setDate(dt.getDate() + days);
-    return dt.toLocaleDateString('en-CA');
+  const replaceDebts = (next: Debt[]) => {
+    debtsRef.current = next;
+    setDebtsState(next);
+  };
+  const replaceRecords = (next: PlannerRecord[]) => {
+    recordsRef.current = next;
+    setPlannerRecordsState(next);
   };
 
-  const reminderSettingKey = `smartspend_habit_reminders_enabled_v1:${session?.user.id ?? 'local'}`;
-
-  useEffect(() => {
-    setRemindersEnabled(localStorage.getItem(reminderSettingKey) !== 'false');
-  }, [reminderSettingKey]);
-
-  const openTransactionModal = (
-    prefill: Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>> | null = null,
-    billToConfirm: RecurringTransaction | null = null,
-  ) => {
-    setEditingTransaction(null);
-    setExpensePrefill(prefill);
-    setConfirmingBill(billToConfirm);
-    setIsExpenseModalOpen(true);
-  };
-
-  const closeTransactionModal = () => {
-    setIsExpenseModalOpen(false);
-    setEditingTransaction(null);
-    setExpensePrefill(null);
-    setConfirmingBill(null);
-  };
-
-  useEffect(() => () => {
-    if (quickAddTimer.current !== null) window.clearTimeout(quickAddTimer.current);
-  }, []);
-
-  useEffect(() => {
-    const handleShortcut = (event: KeyboardEvent) => {
-      if (!event.altKey || event.ctrlKey || event.metaKey) return;
-      const target = event.target as HTMLElement | null;
-      if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
-      if (isExpenseModalOpen || isDebtModalOpen || isGoalModalOpen || isPayDebtModalOpen || isAddFundsModalOpen) return;
-      if (event.key.toLocaleLowerCase() === 'e') {
-        event.preventDefault();
-        openTransactionModal({ type: 'expense' });
-      }
-      if (event.key.toLocaleLowerCase() === 'i') {
-        event.preventDefault();
-        openTransactionModal({ type: 'income' });
-      }
-    };
-    window.addEventListener('keydown', handleShortcut);
-    return () => window.removeEventListener('keydown', handleShortcut);
-  }, [isAddFundsModalOpen, isDebtModalOpen, isExpenseModalOpen, isGoalModalOpen, isPayDebtModalOpen]);
+  // ---------------------------------------------------------------- Loading
 
   useEffect(() => {
     if (!supabase) return;
@@ -152,19 +136,17 @@ const App: React.FC = () => {
       setLoadError(null);
       try {
         await syncPendingChanges();
-        await processRecurringTransactions();
-        const [txs, dbs, gls, rules] = await Promise.all([
-          getTransactions(),
-          getDebts(),
-          getGoals(),
-          getRecurringTransactions(),
-        ]);
+        const records = await getPlannerRecords();
+        // Once transfer bills are set up, old recurring rules would count them twice.
+        if (!isPlannerConfigured(toPlannerData(records))) await processRecurringTransactions();
+        const [txs, dbs, gls, rules] = await Promise.all([getTransactions(), getDebts(), getGoals(), getRecurringTransactions()]);
+        replaceRecords(records);
         setTransactions(txs);
-        setDebts(dbs);
+        replaceDebts(dbs);
         setGoals(gls);
         setRecurringRules(rules);
       } catch (error) {
-        setLoadError(error instanceof Error ? error.message : 'Could not load your data');
+        setLoadError(errorText(error, 'Could not load your data'));
       } finally {
         setIsLoading(false);
       }
@@ -177,403 +159,397 @@ const App: React.FC = () => {
   }, [authReady, session?.user.id]);
 
   useEffect(() => {
-    habitsInitialized.current = false;
     void loadData(true);
   }, [loadData]);
 
   useEffect(() => subscribeToSyncState(setSyncState), []);
 
   useEffect(() => {
-    const syncOnReconnect = () => void loadData(false);
-    const syncOnFocus = () => {
-      if (document.visibilityState === 'visible') void loadData(false);
+    const refresh = () => {
+      setToday(todayLocalDate());
+      void loadData(false);
     };
-    window.addEventListener('online', syncOnReconnect);
-    window.addEventListener('focus', syncOnFocus);
-    document.addEventListener('visibilitychange', syncOnFocus);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    window.addEventListener('online', refresh);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
-      window.removeEventListener('online', syncOnReconnect);
-      window.removeEventListener('focus', syncOnFocus);
-      document.removeEventListener('visibilitychange', syncOnFocus);
+      window.removeEventListener('online', refresh);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [loadData]);
 
-  // Habits bootstrap (Supabase-first, local fallback)
-  useEffect(() => {
-    if (isLoading || habitsInitialized.current) return;
-    const init = async () => {
-      const [storedPatterns, storedState] = await Promise.all([getHabitPatterns(), getHabitReminderState()]);
+  useEffect(() => () => {
+    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+  }, []);
 
-      const computed = buildHabitPatterns(transactions);
-      const merged = computed.map((p) => {
-        const existing = storedPatterns.find((sp) => sp.habitId === p.habitId);
-        return existing ? { ...p, active: existing.active } : p;
-      });
+  // ---------------------------------------------------------------- Planner
 
-      setHabitPatternsState(merged);
-      setHabitStateById(storedState);
+  const plannerData = useMemo(() => toPlannerData(plannerRecords), [plannerRecords]);
+  const isConfigured = isPlannerConfigured(plannerData);
+  const { settings } = plannerData;
+  const currentCycle = useMemo(() => cycleForDate(today, settings), [today, settings]);
+  const viewedCycle = useMemo(() => getCycle(shiftMonthKey(currentCycle.key, cycleOffset), settings), [currentCycle.key, cycleOffset, settings]);
+  const previousCycle = useMemo(() => getCycle(shiftMonthKey(currentCycle.key, -1), settings), [currentCycle.key, settings]);
+  const planInput = useMemo(() => ({ data: plannerData, debts, transactions, today }), [plannerData, debts, transactions, today]);
+  const currentPlan = useMemo(() => buildCyclePlan(currentCycle, planInput), [currentCycle, planInput]);
+  const viewedPlan = useMemo(() => buildCyclePlan(viewedCycle, planInput), [viewedCycle, planInput]);
+  const nextPlan = useMemo(() => buildCyclePlan(getCycle(shiftMonthKey(currentCycle.key, 1), settings), planInput), [currentCycle.key, settings, planInput]);
+  const historyPlans = useMemo(() => {
+    const keys = new Set(plannerData.cycles.map((record) => record.key).filter((key) => key <= currentCycle.key));
+    if (currentPlan.record) keys.add(currentCycle.key);
+    return [...keys].sort().reverse().map((key) => buildCyclePlan(getCycle(key, settings), planInput));
+  }, [plannerData.cycles, currentCycle.key, currentPlan.record, settings, planInput]);
+  const latestSalary = [...plannerData.cycles].filter((record) => record.salary > 0).sort((a, b) => b.key.localeCompare(a.key))[0]?.salary ?? null;
+  const cardNames = useMemo(() => Object.fromEntries(plannerData.cards.map((card) => [card.id, card.name])), [plannerData.cards]);
 
-      // Best-effort persist of computed patterns (keeps Supabase in sync).
-      await saveHabitPatterns(merged);
-      habitsInitialized.current = true;
-    };
-    void init();
-  }, [isLoading, transactions]);
+  const putPlanner = async (kind: PlannerKind, id: string, data: unknown) => {
+    const record: PlannerRecord = { id, kind, data, updated_at: new Date().toISOString() };
+    replaceRecords([record, ...recordsRef.current.filter((item) => item.id !== id)]);
+    await savePlannerRecord(kind, id, data);
+  };
 
-  // Recompute patterns when transactions change (preserve active toggles).
-  useEffect(() => {
-    if (!habitsInitialized.current) return;
-    const computed = buildHabitPatterns(transactions);
-    setHabitPatternsState((prev) => {
-      const merged = computed.map((p) => {
-        const existing = prev.find((sp) => sp.habitId === p.habitId);
-        return existing ? { ...p, active: existing.active } : p;
-      });
-      void saveHabitPatterns(merged);
-      return merged;
-    });
-  }, [transactions]);
+  const dropPlanner = async (id: string) => {
+    replaceRecords(recordsRef.current.filter((item) => item.id !== id));
+    await deletePlannerRecord(id);
+  };
 
-  // In-app reminders (reliable) – run on open / foreground.
-  useEffect(() => {
-    if (isLoading) return;
-    if (!remindersEnabled) return;
+  const putDebt = async (debt: Debt) => {
+    replaceDebts([debt, ...debtsRef.current.filter((item) => item.id !== debt.id)]);
+    await saveDebt(debt);
+  };
 
-    const maybeShow = async () => {
-      if (habitReminder) return;
-      if (!habitPatterns.length) return;
-      if (isMoreMenuOpen || isExpenseModalOpen || isDebtModalOpen || isGoalModalOpen || isAddFundsModalOpen || isPayDebtModalOpen) return;
+  const dropDebt = async (id: string) => {
+    replaceDebts(debtsRef.current.filter((item) => item.id !== id));
+    await deleteDebt(id);
+  };
 
-      const today = todayLocal();
-      // One reminder per day across all inferred habits. Reminder state is
-      // synced through Supabase, unlike the former device-only daily counter.
-      if (Object.keys(habitStateById).some((habitId) => habitStateById[habitId]?.lastRemindedDate === today)) return;
-
-      const candidate = findDueHabitReminder(habitPatterns, transactions, habitStateById);
-      if (!candidate) return;
-
-      // Mark it when shown so changing focus or reloading cannot immediately
-      // show the same reminder again.
-      const existing = habitStateById[candidate.habitId] ?? {
-        habitId: candidate.habitId,
-        lastRemindedDate: null,
-        snoozedUntil: null,
-        dismissCountRecent: 0,
-      };
-      const nextState = {
-        ...habitStateById,
-        [candidate.habitId]: { ...existing, lastRemindedDate: today },
-      };
-      setHabitStateById(nextState);
-      void saveHabitReminderState(nextState);
-      setHabitReminder(candidate);
-    };
-
-    const onVis = () => {
-      if (document.visibilityState === 'visible') void maybeShow();
-    };
-    const onFocus = () => void maybeShow();
-
-    document.addEventListener('visibilitychange', onVis);
-    window.addEventListener('focus', onFocus);
-    void maybeShow();
-
-    return () => {
-      document.removeEventListener('visibilitychange', onVis);
-      window.removeEventListener('focus', onFocus);
-    };
-  }, [
-    habitPatterns,
-    habitReminder,
-    habitStateById,
-    isAddFundsModalOpen,
-    isMoreMenuOpen,
-    isDebtModalOpen,
-    isExpenseModalOpen,
-    isGoalModalOpen,
-    isLoading,
-    isPayDebtModalOpen,
-    remindersEnabled,
-    transactions,
-  ]);
-
-  const handleSaveTransaction = async (newTxData: Omit<Transaction, 'id'>, existingId?: string) => {
-    if (existingId) {
-      const updatedTx: Transaction = { ...newTxData, id: existingId, created_at: editingTransaction?.created_at ?? new Date().toISOString() };
-      setTransactions(prev => prev.map(tx => tx.id === existingId ? updatedTx : tx));
-      await saveTransaction(updatedTx);
-    } else {
-      const newTx: Transaction = { ...newTxData, id: crypto.randomUUID(), created_at: new Date().toISOString() };
-      setTransactions(prev => [newTx, ...prev]);
-      await saveTransaction(newTx);
+  /** Sets a card bill's paid state, moving its split installments along with it. */
+  const setCardBillPaid = async (statement: CardStatement, paid: boolean) => {
+    let next = statement;
+    if (next.paidAt) {
+      const reverted = unmarkCardBillPaid(next, debtsRef.current);
+      for (const debt of reverted.updatedDebts) await putDebt(debt);
+      next = reverted.statement;
     }
+    const card = toPlannerData(recordsRef.current).cards.find((item) => item.id === statement.cardId);
+    if (paid && card) {
+      const applied = markCardBillPaid(next, debtsRef.current, cardDueDate(card, statement.usageMonth));
+      for (const debt of applied.updatedDebts) await putDebt(debt);
+      next = applied.statement;
+    }
+    await putPlanner('statement', next.id, next);
+  };
 
-    if (!existingId && confirmingBill) {
-      const due = new Date(confirmingBill.nextDue);
-      if (!Number.isNaN(due.getTime())) {
-        const anchorDay = confirmingBill.anchorDay ?? due.getDate();
-        await saveRecurringTransaction({
-          ...confirmingBill,
-          anchorDay,
-          nextDue: getNextRecurringDate(due, confirmingBill.frequency, anchorDay).toISOString(),
+  const saveCardBill = async (input: CardBillInput, paid?: boolean) => {
+    const existing = toPlannerData(recordsRef.current).statements.find((item) => item.id === statementId(input.card.id, input.usageMonth));
+    const { statement, splitDebt, removedSplitDebtId } = buildCardBill(input, existing, debtsRef.current);
+    if (splitDebt) await putDebt(splitDebt);
+    if (removedSplitDebtId) await dropDebt(removedSplitDebtId);
+    await setCardBillPaid(statement, paid ?? Boolean(existing?.paidAt));
+  };
+
+  const saveBillPayment = async (bill: Bill, dueDate: string, patch: Partial<BillPayment>) => {
+    const id = billPaymentId(bill.id, dueDate);
+    const existing = toPlannerData(recordsRef.current).billPayments.find((item) => item.id === id);
+    const next: BillPayment = { id, billId: bill.id, dueDate, amount: bill.amount, confirmed: false, ...existing, ...patch };
+    await putPlanner('bill_payment', id, next);
+  };
+
+  /** Moves check-in savings into a goal, undoing what an earlier save of the same check-in added. */
+  const moveSavingsToGoal = async (previous?: PayCycleRecord['savingsApplied'], next?: PayCycleRecord['savingsApplied']) => {
+    if (previous?.goalId === next?.goalId && previous?.amount === next?.amount) return;
+    const changes = new Map<string, number>();
+    if (previous) changes.set(previous.goalId, (changes.get(previous.goalId) ?? 0) - previous.amount);
+    if (next) changes.set(next.goalId, (changes.get(next.goalId) ?? 0) + next.amount);
+    for (const [goalId, delta] of changes) {
+      const goal = goals.find((item) => item.id === goalId);
+      if (!goal || delta === 0) continue;
+      const updated = { ...goal, currentAmount: Math.max(0, goal.currentAmount + delta) };
+      setGoals((list) => list.map((item) => (item.id === goalId ? updated : item)));
+      await saveGoal(updated);
+    }
+  };
+
+  const handleCheckin = async (result: CheckinResult) => {
+    const id = cycleRecordId(result.cycleKey);
+    const previous = plannerData.cycles.find((item) => item.id === id);
+    const savingsApplied = result.savingsGoalId && result.savings > 0 ? { goalId: result.savingsGoalId, amount: result.savings } : undefined;
+    await moveSavingsToGoal(previous?.savingsApplied, savingsApplied);
+    const record: PayCycleRecord = {
+      id,
+      key: result.cycleKey,
+      salary: result.salary,
+      carryover: result.carryover,
+      savings: result.savings,
+      trackingFrom: result.trackingFrom,
+      savingsGoalId: result.savingsGoalId,
+      savingsApplied,
+      checkedInAt: new Date().toISOString(),
+    };
+    await putPlanner('cycle', id, record);
+
+    // A late check-in covers bills whose due date already passed: they were paid.
+    const checkinDay = todayLocalDate();
+    for (const input of result.cardBills) {
+      await saveCardBill(input, cardDueDate(input.card, input.usageMonth) < checkinDay ? true : undefined);
+    }
+    for (const { bill, dueDate, amount } of result.billAmounts) {
+      const existing = plannerData.billPayments.find((item) => item.id === billPaymentId(bill.id, dueDate));
+      const changed = amount !== (existing?.amount ?? bill.amount);
+      const alreadyDue = dueDate < checkinDay && !existing?.paidAt;
+      if (changed || alreadyDue) {
+        await saveBillPayment(bill, dueDate, {
+          amount,
+          ...(changed ? { confirmed: true } : {}),
+          ...(alreadyDue ? { paidAt: new Date().toISOString() } : {}),
         });
       }
     }
-    setRecurringRules(await getRecurringTransactions());
-    setEditingTransaction(null);
-    setExpensePrefill(null);
-    setConfirmingBill(null);
-    setIsExpenseModalOpen(false);
-  };
-
-  const handleConfirmExpectedBill = (id: string) => {
-    const rule = recurringRules.find((candidate) => candidate.id === id);
-    if (!rule) return;
-    openTransactionModal({
-      type: 'expense',
-      amount: rule.transactionTemplate.amount,
-      description: rule.transactionTemplate.description.replace(/^\(Recurring\)\s*/i, ''),
-      category: rule.transactionTemplate.category,
-      date: new Date(rule.nextDue).toLocaleDateString('en-CA'),
-    }, rule);
-  };
-
-  const handlePostponeExpectedBill = async (id: string) => {
-    const rule = recurringRules.find((candidate) => candidate.id === id);
-    if (!rule) return;
-    const due = new Date(rule.nextDue);
-    if (Number.isNaN(due.getTime())) return;
-    // An old overdue bill should snooze from today, not remain overdue after
-    // merely adding three days to its original estimated date.
-    const now = new Date();
-    const postponeFrom = due < now ? now : due;
-    const updated = { ...rule, nextDue: addDaysClamped(postponeFrom, 3).toISOString() };
-    setRecurringRules((previous) => previous.map((candidate) => candidate.id === id ? updated : candidate));
-    try {
-      await saveRecurringTransaction(updated);
-    } catch (error) {
-      setRecurringRules((previous) => previous.map((candidate) => candidate.id === id ? rule : candidate));
-      setLoadError(error instanceof Error ? error.message : 'Could not postpone this bill.');
+    if (result.savings !== settings.defaultSavings || result.savingsGoalId !== settings.defaultSavingsGoalId) {
+      await putPlanner('settings', SETTINGS_RECORD_ID, { ...settings, defaultSavings: result.savings, defaultSavingsGoalId: result.savingsGoalId });
     }
+    setCheckinMode(null);
   };
 
-  const handleToggleRecurringConfirmation = async (id: string) => {
-    const rule = recurringRules.find((candidate) => candidate.id === id);
-    if (!rule || rule.transactionTemplate.type !== 'expense') return;
-    const updated: RecurringTransaction = {
-      ...rule,
-      transactionTemplate: {
-        ...rule.transactionTemplate,
-        requiresConfirmation: !rule.transactionTemplate.requiresConfirmation || undefined,
-      },
-    };
-    setRecurringRules((previous) => previous.map((candidate) => candidate.id === id ? updated : candidate));
-    try {
-      await saveRecurringTransaction(updated);
-    } catch (error) {
-      setRecurringRules((previous) => previous.map((candidate) => candidate.id === id ? rule : candidate));
-      setLoadError(error instanceof Error ? error.message : 'Could not update this recurring bill.');
-    }
+  const handleSaveUsage = async (card: Card, usageMonth: string, amount: number) => {
+    const id = cardUsageId(card.id, usageMonth);
+    const usage: CardUsage = { id, cardId: card.id, usageMonth, amount, asOf: todayLocalDate() };
+    await putPlanner('card_usage', id, usage);
   };
 
-  const handleQuickAdd = async (prefill: Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>>) => {
-    if (!prefill.amount || !prefill.description || !prefill.category) return;
-    let date = new Date().toISOString();
-    if (prefill.date) {
-      try {
-        date = prefill.date.includes('T') ? prefill.date : localDateInputToIso(prefill.date);
-      } catch {
-        date = new Date().toISOString();
-      }
+  /** Imported history explains card bills; its charged total can stand in for the card's month total. */
+  const handleImportBreakdowns = async (breakdowns: CardBreakdown[], usages: CardUsage[]) => {
+    for (const breakdown of breakdowns) await putPlanner('card_breakdown', breakdown.id, breakdown);
+    for (const usage of usages) await putPlanner('card_usage', usage.id, usage);
+  };
+
+  /** Records the gap between the real balance and the plan, so the numbers match the bank again. */
+  const handleBalanceAdjust = async (difference: number, savingsInAccount: boolean) => {
+    if (savingsInAccount !== (settings.savingsInAccount ?? true)) {
+      await putPlanner('settings', SETTINGS_RECORD_ID, { ...settings, savingsInAccount });
     }
     const transaction: Transaction = {
       id: crypto.randomUUID(),
-      type: prefill.type ?? 'expense',
-      amount: prefill.amount,
-      description: prefill.description,
-      category: prefill.category,
-      date,
+      amount: Math.abs(difference),
+      type: difference < 0 ? 'expense' : 'income',
+      category: Category.Other,
+      description: BALANCE_ADJUSTMENT_NOTE,
+      date: new Date().toISOString(),
       created_at: new Date().toISOString(),
     };
     setTransactions((previous) => [transaction, ...previous]);
+    setIsBalanceOpen(false);
+    await saveTransaction(transaction);
+  };
+
+  const handleSaveSetup = async (result: PlanSetupResult) => {
+    await putPlanner('settings', SETTINGS_RECORD_ID, result.settings);
+    for (const card of result.cards) await putPlanner('card', card.id, card);
+    for (const bill of result.bills) await putPlanner('bill', bill.id, bill);
+    setIsSetupOpen(false);
+  };
+
+  const handleTogglePaid = async (obligation: Obligation) => {
     try {
-      await saveTransaction(transaction);
-      setQuickAddNotice(transaction);
-      if (quickAddTimer.current !== null) window.clearTimeout(quickAddTimer.current);
-      quickAddTimer.current = window.setTimeout(() => {
-        setQuickAddNotice(null);
-        quickAddTimer.current = null;
-      }, 5000);
+      if (obligation.kind === 'debt') {
+        handleOpenPayDebt(obligation.refId);
+      } else if (obligation.kind === 'card') {
+        // The real amount is needed before a bill can be marked paid.
+        if (!obligation.statement) setEditingObligation(obligation);
+        else await setCardBillPaid(obligation.statement, !obligation.paid);
+      } else {
+        const bill = plannerData.bills.find((item) => item.id === obligation.refId);
+        if (!bill) return;
+        if (obligation.needsAmount) setEditingObligation(obligation);
+        else await saveBillPayment(bill, obligation.dueDate, { amount: obligation.amount, paidAt: obligation.paid ? undefined : new Date().toISOString() });
+      }
     } catch (error) {
-      setTransactions((previous) => previous.filter((item) => item.id !== transaction.id));
-      setLoadError(error instanceof Error ? error.message : 'Could not add the quick entry.');
+      setLoadError(errorText(error, 'Could not update this bill.'));
     }
   };
 
-  const handleUndoQuickAdd = async () => {
-    const transaction = quickAddNotice;
+  // ------------------------------------------------------------ Transactions
+
+  const showNotice = (transaction: Transaction) => {
+    setNotice(transaction);
+    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => {
+      setNotice(null);
+      noticeTimer.current = null;
+    }, 5000);
+  };
+
+  const handleSaveCash = async (data: Omit<Transaction, 'id'>) => {
+    const transaction: Transaction = { ...data, id: crypto.randomUUID(), created_at: new Date().toISOString() };
+    setTransactions((previous) => [transaction, ...previous]);
+    setIsCashOpen(false);
+    showNotice(transaction);
+    try {
+      await saveTransaction(transaction);
+    } catch (error) {
+      setTransactions((previous) => previous.filter((item) => item.id !== transaction.id));
+      setLoadError(errorText(error, 'Could not save the expense.'));
+    }
+  };
+
+  const handleUndoNotice = async () => {
+    const transaction = notice;
     if (!transaction) return;
-    setQuickAddNotice(null);
-    if (quickAddTimer.current !== null) window.clearTimeout(quickAddTimer.current);
-    quickAddTimer.current = null;
+    setNotice(null);
     setTransactions((previous) => previous.filter((item) => item.id !== transaction.id));
     try {
       await deleteTransaction(transaction.id);
     } catch (error) {
       setTransactions((previous) => [transaction, ...previous]);
-      setLoadError(error instanceof Error ? error.message : 'Could not undo the quick entry.');
+      setLoadError(errorText(error, 'Could not undo.'));
     }
   };
 
-  const handleDeleteTransaction = (id: string) => {
-    setPendingDelete({ type: 'transaction', id });
+  const openTransactionForm = (prefill: TransactionPrefill | null, transaction: Transaction | null = null) => {
+    setTransactionPrefill(prefill);
+    setEditingTransaction(transaction);
+    setIsTransactionModalOpen(true);
   };
 
-  const handleSaveDebt = async (newDebtData: Omit<Debt, 'id' | 'isPaid'>, existingId?: string) => {
-    if (existingId) {
-      const updated: Debt = { ...newDebtData, id: existingId, isPaid: newDebtData.amount <= 0 };
-      setDebts(prev => prev.map(d => d.id === existingId ? updated : d));
-      await saveDebt(updated);
-    } else {
-      const newDebt: Debt = { ...newDebtData, id: crypto.randomUUID(), isPaid: false };
-      setDebts(prev => [newDebt, ...prev]);
-      await saveDebt(newDebt);
-    }
+  const closeTransactionForm = () => {
+    setIsTransactionModalOpen(false);
+    setEditingTransaction(null);
+    setTransactionPrefill(null);
+  };
+
+  const handleSaveTransaction = async (data: Omit<Transaction, 'id'>, existingId?: string) => {
+    const transaction: Transaction = existingId
+      ? { ...data, id: existingId, created_at: editingTransaction?.created_at ?? new Date().toISOString() }
+      : { ...data, id: crypto.randomUUID(), created_at: new Date().toISOString() };
+    setTransactions((previous) => [transaction, ...previous.filter((item) => item.id !== transaction.id)]);
+    closeTransactionForm();
+    await saveTransaction(transaction);
+  };
+
+  useEffect(() => {
+    if (isLoading) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('action') !== 'cash') return;
+    setIsCashOpen(true);
+    window.history.replaceState(null, '', window.location.pathname);
+  }, [isLoading]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (!event.altKey || event.ctrlKey || event.metaKey) return;
+      if ((event.target as HTMLElement | null)?.matches('input, textarea, select, [contenteditable="true"]')) return;
+      const key = event.key.toLocaleLowerCase();
+      if (key === 'e') {
+        event.preventDefault();
+        setIsCashOpen(true);
+      } else if (key === 'i') {
+        event.preventDefault();
+        openTransactionForm({ type: 'income' });
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, []);
+
+  // ------------------------------------------------------------ Debts, goals
+
+  const handleSaveDebt = async (data: Omit<Debt, 'id' | 'isPaid'>, existingId?: string) => {
+    const existing = existingId ? debts.find((debt) => debt.id === existingId) : undefined;
+    await putDebt({ ...existing, ...data, id: existingId ?? crypto.randomUUID(), isPaid: data.amount <= 0 });
     setEditingDebt(null);
     setIsDebtModalOpen(false);
   };
 
-  const handleDeleteDebt = (id: string) => {
-    setPendingDelete({ type: 'debt', id });
-  };
-
   const handleOpenPayDebt = (id: string) => {
-     const debt = debts.find(d => d.id === id);
-     if (debt) {
-        setSelectedDebtId(id);
-        setDebtPaymentAmount(Math.min(debt.minimumPayment ?? debt.amount, debt.amount).toString());
-        setDebtPaymentError(null);
-        setIsPayDebtModalOpen(true);
-     }
+    const debt = debts.find((item) => item.id === id);
+    if (!debt) return;
+    setSelectedDebtId(id);
+    setDebtPaymentAmount(String(Math.min(debt.minimumPayment ?? debt.amount, debt.amount)));
+    setDebtPaymentError(null);
+    setEditingObligation(null);
   };
 
-  const handleSubmitDebtPayment = async (e: React.FormEvent) => {
-     e.preventDefault();
-     if (!selectedDebtId || !debtPaymentAmount) return;
+  const selectedDebt = selectedDebtId ? debts.find((debt) => debt.id === selectedDebtId) ?? null : null;
+  const paymentPrincipal = Math.min(Math.max(Number(debtPaymentAmount) || 0, 0), selectedDebt?.amount ?? 0);
+  const paymentInterest = selectedDebt ? monthlyInterest(selectedDebt) : 0;
 
-     const amount = parseFloat(debtPaymentAmount);
-     if (!Number.isFinite(amount) || amount <= 0) {
-       setDebtPaymentError('Enter a positive payment amount.');
-       return;
-     }
-
-     const debt = debts.find(d => d.id === selectedDebtId);
-     if (debt) {
-        if (amount > debt.amount) {
-          setDebtPaymentError(`Payment cannot exceed the ¥${debt.amount.toLocaleString()} balance.`);
-          return;
-        }
-        const principalPayment = Math.min(amount, debt.amount);
-        const monthlyRate = (debt.interestRate ?? 0) / 100 / 12;
-        const interestDue = monthlyRate > 0 ? Math.round(debt.amount * monthlyRate) : 0;
-        const newBalance = Math.max(0, debt.amount - principalPayment);
-        const isPaidOff = newBalance === 0;
-        const currentDue = new Date(debt.dueDate || new Date().toISOString());
-        const nextDue = addMonthsClamped(currentDue, 1, currentDue.getDate());
-
-        const updatedDebt = { ...debt, amount: newBalance, isPaid: isPaidOff, dueDate: nextDue.toISOString() };
-        setDebts(prev => prev.map(d => d.id === selectedDebtId ? updatedDebt : d));
-        await saveDebt(updatedDebt);
-
-        // Principal repays purchases or borrowed money already represented by
-        // the debt balance; recording it as another expense double-counts it.
-        // Interest is the only new cost created by this payment.
-        if (debt.type === 'payable' && interestDue > 0) {
-          const newTx: Transaction = {
-             id: crypto.randomUUID(),
-             amount: interestDue,
-             category: Category.Debt,
-             date: new Date().toISOString(),
-             description: `Interest: ${debt.person}`,
-             type: 'expense'
-          };
-          setTransactions(prev => [newTx, ...prev]);
-          await saveTransaction(newTx);
-        }
-     }
-
-     setIsPayDebtModalOpen(false);
-     setSelectedDebtId(null);
-     setDebtPaymentError(null);
-  };
-
-  const handleSaveGoal = async (newGoalData: Omit<Goal, 'id'>, existingId?: string) => {
-    if (existingId) {
-      const updatedGoal: Goal = { ...newGoalData, id: existingId };
-      setGoals(prev => prev.map(g => g.id === existingId ? updatedGoal : g));
-      await saveGoal(updatedGoal);
-    } else {
-      const newGoal: Goal = { ...newGoalData, id: crypto.randomUUID() };
-      setGoals(prev => [newGoal, ...prev]);
-      await saveGoal(newGoal);
+  const handleSubmitDebtPayment = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedDebt) return;
+    const principal = Number(debtPaymentAmount);
+    if (!Number.isFinite(principal) || principal <= 0) {
+      setDebtPaymentError('Enter a positive amount.');
+      return;
     }
+    if (principal > selectedDebt.amount) {
+      setDebtPaymentError(`That's more than the ${formatYen(selectedDebt.amount)} balance.`);
+      return;
+    }
+    const balance = selectedDebt.amount - principal;
+    const due = new Date(selectedDebt.dueDate || new Date().toISOString());
+    await putDebt({ ...selectedDebt, amount: balance, isPaid: balance === 0, dueDate: addMonthsClamped(due, 1, due.getDate()).toISOString() });
+    // The whole payment leaves the account, so it counts against this cycle.
+    const transaction: Transaction = {
+      id: crypto.randomUUID(),
+      amount: principal + paymentInterest,
+      category: Category.Debt,
+      date: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      description: `Debt payment: ${selectedDebt.person} (interest ¥${paymentInterest.toLocaleString('ja-JP')})`,
+      type: 'expense',
+    };
+    setTransactions((previous) => [transaction, ...previous]);
+    await saveTransaction(transaction);
+    setSelectedDebtId(null);
+  };
+
+  const handleSaveGoal = async (data: Omit<Goal, 'id'>, existingId?: string) => {
+    const goal: Goal = { ...data, id: existingId ?? crypto.randomUUID() };
+    setGoals((previous) => [goal, ...previous.filter((item) => item.id !== goal.id)]);
+    await saveGoal(goal);
     setEditingGoal(null);
     setIsGoalModalOpen(false);
   };
 
-  const handleDeleteGoal = (id: string) => {
-    setPendingDelete({ type: 'goal', id });
+  const handleSubmitFunds = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const amount = Number(fundAmountToAdd);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setFundError('Enter a positive amount.');
+      return;
+    }
+    const goal = goals.find((item) => item.id === selectedGoalId);
+    if (goal) {
+      const updated = { ...goal, currentAmount: goal.currentAmount + amount };
+      setGoals((previous) => previous.map((item) => (item.id === goal.id ? updated : item)));
+      await saveGoal(updated);
+    }
+    setSelectedGoalId(null);
   };
 
   const confirmDelete = async () => {
     if (!pendingDelete) return;
     const { type, id } = pendingDelete;
-
+    setPendingDelete(null);
     if (type === 'transaction') {
-      setTransactions(prev => prev.filter(e => e.id !== id));
+      setTransactions((previous) => previous.filter((item) => item.id !== id));
       await deleteTransaction(id);
     } else if (type === 'debt') {
-      setDebts(prev => prev.filter(d => d.id !== id));
-      await deleteDebt(id);
+      await dropDebt(id);
     } else if (type === 'goal') {
-      setGoals(prev => prev.filter(g => g.id !== id));
+      setGoals((previous) => previous.filter((item) => item.id !== id));
       await deleteGoal(id);
-    } else if (type === 'recurring') {
-      setRecurringRules(prev => prev.filter(rule => rule.id !== id));
+    } else {
+      setRecurringRules((previous) => previous.filter((rule) => rule.id !== id));
       await deleteRecurringTransaction(id);
     }
-
-    setPendingDelete(null);
   };
 
-  const handleOpenAddFunds = (id: string) => {
-    setSelectedGoalId(id);
-    setFundAmountToAdd('');
-    setFundError(null);
-    setIsAddFundsModalOpen(true);
-  };
-
-  const handleSubmitFunds = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (selectedGoalId && fundAmountToAdd) {
-      const amount = parseFloat(fundAmountToAdd);
-      if (!Number.isFinite(amount) || amount <= 0) {
-        setFundError('Enter a positive amount.');
-        return;
-      }
-
-      const goal = goals.find(g => g.id === selectedGoalId);
-      if (goal) {
-        const updatedGoal = { ...goal, currentAmount: goal.currentAmount + amount };
-        setGoals(prev => prev.map(g => g.id === selectedGoalId ? updatedGoal : g));
-        await saveGoal(updatedGoal);
-      }
-      
-      setIsAddFundsModalOpen(false);
-      setSelectedGoalId(null);
-      setFundError(null);
-    }
-  };
+  // ------------------------------------------------------- Account, backup
 
   const handleSignOut = async () => {
     if (!supabase || !session) return;
@@ -581,9 +557,10 @@ const App: React.FC = () => {
     await supabase.auth.signOut();
     setIsSettingsModalOpen(false);
     setTransactions([]);
-    setDebts([]);
+    replaceDebts([]);
     setGoals([]);
     setRecurringRules([]);
+    replaceRecords([]);
   };
 
   const handleExport = () => {
@@ -593,280 +570,271 @@ const App: React.FC = () => {
       debts,
       goals,
       recurringTransactions: recurringRules,
+      plannerRecords,
     };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `smartspend-backup-${todayLocal()}.json`;
+    anchor.download = `runway-backup-${todayLocalDate()}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
   };
 
   const handleImport = async (file: File): Promise<string> => {
-    const raw = await file.text();
     let payload: unknown;
     try {
-      payload = JSON.parse(raw);
+      payload = JSON.parse(await file.text());
     } catch {
-      throw new Error('This is not a valid SmartSpend JSON backup.');
+      throw new Error(`This is not a valid ${APP_NAME} backup.`);
     }
-    if (!payload || typeof payload !== 'object') throw new Error('Backup content is missing.');
+    if (!payload || typeof payload !== 'object') throw new Error('The backup is empty.');
     const backup = payload as Record<string, unknown>;
-    const importedTransactions = Array.isArray(backup.transactions) ? backup.transactions as Transaction[] : [];
-    const importedDebts = Array.isArray(backup.debts) ? backup.debts as Debt[] : [];
-    const importedGoals = Array.isArray(backup.goals) ? backup.goals as Goal[] : [];
-    const importedRecurring = Array.isArray(backup.recurringTransactions) ? backup.recurringTransactions as RecurringTransaction[] : [];
-    const allRows = [...importedTransactions, ...importedDebts, ...importedGoals, ...importedRecurring];
-    if (allRows.length === 0) throw new Error('No SmartSpend records were found in this backup.');
+    const list = <T,>(key: string) => (Array.isArray(backup[key]) ? backup[key] as T[] : []);
+    const importedTransactions = list<Transaction>('transactions');
+    const importedDebts = list<Debt>('debts');
+    const importedGoals = list<Goal>('goals');
+    const importedRecurring = list<RecurringTransaction>('recurringTransactions');
+    const importedPlanner = list<PlannerRecord>('plannerRecords');
+    const allRows = [...importedTransactions, ...importedDebts, ...importedGoals, ...importedRecurring, ...importedPlanner];
+    if (allRows.length === 0) throw new Error('No records were found in this backup.');
     if (allRows.some((row) => !row || typeof row !== 'object' || typeof row.id !== 'string' || !row.id)) {
       throw new Error('Some backup records are invalid or missing an ID.');
     }
-
     for (const transaction of importedTransactions) await saveTransaction(transaction);
     for (const debt of importedDebts) await saveDebt(debt);
     for (const goal of importedGoals) await saveGoal(goal);
     for (const recurring of importedRecurring) await saveRecurringTransaction(recurring);
+    for (const record of importedPlanner) await savePlannerRecord(record.kind, record.id, record.data);
     await loadData(false);
     return `Merged ${allRows.length} record${allRows.length === 1 ? '' : 's'} from the backup.`;
   };
 
-  const handleToggleReminders = () => {
-    const next = !remindersEnabled;
-    setRemindersEnabled(next);
-    localStorage.setItem(reminderSettingKey, String(next));
-    if (!next) setHabitReminder(null);
-  };
-
-  const handleToggleHabit = (habitId: string) => {
-    setHabitPatternsState((previous) => {
-      const updated = previous.map((pattern) => pattern.habitId === habitId ? { ...pattern, active: !pattern.active } : pattern);
-      void saveHabitPatterns(updated);
-      return updated;
-    });
-  };
-
-  const handleFabClick = () => {
-    if (currentView === 'debts') {
-      setIsDebtModalOpen(true);
-    } else if (currentView === 'goals') {
-      setIsGoalModalOpen(true);
-    } else {
-      openTransactionModal({ type: 'expense' });
-    }
-  };
-
-  const selectedDebt = selectedDebtId ? debts.find((debt) => debt.id === selectedDebtId) ?? null : null;
-  const paymentPrincipalPreview = Math.min(Math.max(parseFloat(debtPaymentAmount) || 0, 0), selectedDebt?.amount ?? 0);
-  const paymentInterestPreview = selectedDebt
-    ? Math.round(selectedDebt.amount * ((selectedDebt.interestRate ?? 0) / 100 / 12))
-    : 0;
+  // ---------------------------------------------------------------- Render
 
   if (authReady && supabase && !session) return <AuthScreen />;
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-black flex justify-center font-sans">
-        <div className="w-full max-w-5xl px-4 sm:px-6 py-6 space-y-4 min-h-screen">
-          <div className="h-10 w-32 bg-zinc-800/70 rounded-full animate-pulse-slow" />
-          <div className="bg-zinc-900/60 border border-zinc-800/70 rounded-xl p-5 space-y-4 backdrop-blur-sm">
-            <div className="h-4 w-24 bg-zinc-800/70 rounded animate-pulse-slow" />
-            <div className="flex gap-3">
-              <div className="h-8 w-24 bg-zinc-800/70 rounded animate-pulse-slow" />
-              <div className="h-8 w-24 bg-zinc-800/70 rounded animate-pulse-slow" />
-            </div>
-          </div>
-          <div className="bg-zinc-900/60 border border-zinc-800/70 rounded-xl p-5 space-y-3 backdrop-blur-sm">
-            <div className="h-4 w-32 bg-zinc-800/70 rounded animate-pulse-slow" />
-            <div className="h-40 w-full bg-zinc-800/50 rounded-lg animate-pulse-slow" />
-          </div>
-          <div className="bg-zinc-900/60 border border-zinc-800/70 rounded-xl p-5 space-y-3 backdrop-blur-sm">
-            <div className="h-4 w-28 bg-zinc-800/70 rounded animate-pulse-slow" />
-            <div className="h-40 w-full bg-zinc-800/50 rounded-lg animate-pulse-slow" />
-          </div>
-          <div className="bg-zinc-900/60 border border-zinc-800/70 rounded-xl p-5 space-y-3 backdrop-blur-sm">
-            <div className="h-4 w-28 bg-zinc-800/70 rounded animate-pulse-slow" />
-            <div className="h-40 w-full bg-zinc-800/50 rounded-lg animate-pulse-slow" />
-          </div>
-        </div>
-        <style>{`
-          @keyframes pulse-slow { 
-            0% { opacity: 0.6; } 
-            50% { opacity: 1; } 
-            100% { opacity: 0.6; } 
-          }
-          .animate-pulse-slow { animation: pulse-slow 1.5s ease-in-out infinite; }
-        `}</style>
+      <div className="mx-auto min-h-screen max-w-5xl space-y-4 px-4 py-6 sm:px-6">
+        <div className="h-8 w-32 animate-pulse rounded-lg bg-subtle" />
+        <div className="h-64 animate-pulse rounded-xl bg-card" />
+        <div className="h-40 animate-pulse rounded-xl bg-card" />
       </div>
     );
   }
 
+  const syncProblem = Boolean(syncState.lastError) || syncState.pendingCount > 0;
+  const navItem = (view: ViewState, label: string, icon: React.ReactNode, onClick = () => setCurrentView(view)) => (
+    <button type="button" onClick={onClick} aria-current={currentView === view ? 'page' : undefined} className={`flex flex-col items-center justify-center gap-0.5 rounded-lg py-1.5 text-[11px] transition ${currentView === view ? 'text-ink' : 'text-ink-3 hover:text-ink-2'}`}>
+      {icon}
+      {label}
+    </button>
+  );
+
   return (
-    <div
-      className="min-h-screen max-w-5xl mx-auto shadow-2xl shadow-zinc-900 relative overflow-hidden text-zinc-200 border-x border-zinc-900 font-sans"
-      style={{
-        backgroundColor: '#000',
-        backgroundImage:
-          'radial-gradient(circle at 50% 20%, rgba(63, 63, 70, 0.35), rgba(0,0,0,0.5) 45%, #000 75%)'
-      }}
-    >
-      {/* Header - Minimal & Translucent */}
-      <header className="bg-black/70 backdrop-blur-md px-5 py-3.5 sticky top-0 z-20 border-b border-zinc-900/80 flex items-center justify-between">
-        <div className="flex items-center gap-2.5 text-zinc-100">
-          <div className="p-1.5 rounded-md bg-zinc-100 text-black">
-             <Landmark className="w-3.5 h-3.5" strokeWidth={3} />
-          </div>
-          <h1 className="text-sm font-bold tracking-wide text-white">SmartSpend</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleFabClick}
-            aria-label={currentView === 'debts' ? 'Add debt' : currentView === 'goals' ? 'Add goal' : 'Add transaction'}
-            className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-700 bg-zinc-100 text-black transition hover:bg-white active:scale-95"
-          >
-            <Plus size={18} strokeWidth={2.5} />
+    <div className="min-h-screen text-ink">
+      <header className="sticky top-0 z-20 h-14 border-b border-line bg-page/90 backdrop-blur">
+        <div className="mx-auto flex h-full max-w-5xl items-center justify-between px-4 sm:px-6">
+          <button type="button" onClick={() => { setCurrentView('home'); setCycleOffset(0); }} className="flex items-center gap-2.5">
+            <img src="/favicon.svg" alt="" className="h-7 w-7 rounded-lg" />
+            <span className="text-base font-medium text-ink">{APP_NAME}</span>
           </button>
-          <button
-            onClick={() => setIsSettingsModalOpen(true)}
-            className="relative h-9 px-3 rounded-full border border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white flex items-center gap-2 transition-colors"
-            aria-label="Open sync and settings"
-          >
-            {syncState.isSyncing ? (
-              <RefreshCw size={14} className="animate-spin" />
-            ) : syncState.lastError || syncState.pendingCount > 0 ? (
-              <CloudOff size={14} className="text-amber-400" />
-            ) : (
-              <Cloud size={14} className={supabase ? 'text-emerald-400' : 'text-zinc-500'} />
-            )}
-            <Settings size={13} />
+          <button type="button" onClick={() => setIsSettingsModalOpen(true)} aria-label="Sync and settings" className="relative flex h-9 items-center gap-1.5 rounded-full border border-line bg-card px-3 text-ink-2 transition hover:text-ink">
+            {syncState.isSyncing ? <RefreshCw size={14} className="animate-spin" /> : syncProblem ? <CloudOff size={14} className="text-warn" /> : <Cloud size={14} className={supabase ? 'text-good' : 'text-ink-3'} />}
+            <Settings size={14} />
             {syncState.pendingCount > 0 && (
-              <span className="absolute -right-1 -top-1 min-w-4 h-4 px-1 rounded-full bg-amber-400 text-black text-[9px] font-bold flex items-center justify-center">
-                {syncState.pendingCount}
-              </span>
+              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[10px] font-medium text-on-ink">{syncState.pendingCount}</span>
             )}
           </button>
         </div>
       </header>
 
       {(loadError || syncState.lastError) && (
-        <div className="mx-4 mt-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2.5 flex items-start justify-between gap-3 relative z-10">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-amber-300">Cloud sync needs attention</p>
-            <p className="text-[10px] text-amber-200/70 mt-1 line-clamp-2">{loadError ?? syncState.lastError}</p>
+        <div className="mx-auto mt-3 max-w-5xl px-4 sm:px-6">
+          <div className="flex items-start justify-between gap-3 rounded-lg border border-warn/30 bg-warn-soft px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-warn">Sync needs attention</p>
+              <p className="mt-0.5 line-clamp-2 text-xs text-warn">{loadError ?? syncState.lastError}</p>
+            </div>
+            <button type="button" onClick={() => void loadData(false)} className="flex shrink-0 items-center gap-1 text-xs font-medium text-warn"><RefreshCw size={12} /> Retry</button>
           </div>
-          <button onClick={() => void loadData(false)} className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-amber-200 flex items-center gap-1">
-            <RefreshCw size={11} /> Retry
-          </button>
         </div>
       )}
 
-      <main className="p-4 sm:p-6 min-h-[calc(100vh-140px)] relative z-10">
-        <Suspense fallback={<div className="text-sm text-zinc-500">Loading...</div>}>
-          {currentView === 'dashboard' && (
-            <Dashboard
-              transactions={transactions}
-              debts={debts}
-              goals={goals}
-              recurringRules={recurringRules}
-              onQuickAdd={(prefill) => void handleQuickAdd(prefill)}
-              onOpenTransactions={() => setCurrentView('list')}
-              onOpenDebts={() => setCurrentView('debts')}
-              onPayDebt={handleOpenPayDebt}
-              onOpenGoals={() => setCurrentView('goals')}
-              onAddGoalFunds={handleOpenAddFunds}
-              onConfirmExpectedBill={handleConfirmExpectedBill}
-              onPostponeExpectedBill={(id) => void handlePostponeExpectedBill(id)}
+      <main className="mx-auto max-w-5xl px-4 pt-4 sm:px-6">
+        <Suspense fallback={<div className="h-40 animate-pulse rounded-xl bg-card" />}>
+          {currentView === 'home' && (
+            <CycleHome
+              plan={viewedPlan}
+              nextPlan={nextPlan}
+              isConfigured={isConfigured}
+              onCheckBalance={() => setIsBalanceOpen(true)}
+              onOpenCards={() => setCurrentView('cards')}
+              onShiftCycle={(delta) => setCycleOffset((offset) => offset + delta)}
+              onToday={() => setCycleOffset(0)}
+              onSetup={() => setIsSetupOpen(true)}
+              onCheckIn={setCheckinMode}
+              onTogglePaid={(obligation) => void handleTogglePaid(obligation)}
+              onEditObligation={(obligation) => (obligation.kind === 'debt' ? handleOpenPayDebt(obligation.refId) : setEditingObligation(obligation))}
+              onAddCash={() => setIsCashOpen(true)}
+              onOpenActivity={() => setCurrentView('list')}
+              onEditTransaction={(transaction) => openTransactionForm(null, transaction)}
             />
           )}
-        {currentView === 'list' && <ExpenseList expenses={transactions} onEdit={(tx) => { setExpensePrefill(null); setEditingTransaction(tx); setIsExpenseModalOpen(true); }} />}
-        {currentView === 'debts' && <DebtList debts={debts} onToggleStatus={handleOpenPayDebt} onEdit={(d) => { setEditingDebt(d); setIsDebtModalOpen(true); }} />}
-        {currentView === 'goals' && <GoalList goals={goals} onAddFundsClick={handleOpenAddFunds} onEdit={(g) => { setEditingGoal(g); setIsGoalModalOpen(true); }} />}
+          {currentView === 'list' && (
+            <ExpenseList expenses={transactions} onEdit={(transaction) => openTransactionForm(null, transaction)} currentCycle={currentCycle} previousCycle={previousCycle} />
+          )}
+          {currentView === 'cards' && (
+            <CardsView
+              data={plannerData}
+              debts={debts}
+              today={today}
+              latestSalary={latestSalary}
+              onSaveUsage={handleSaveUsage}
+              onImportBreakdowns={handleImportBreakdowns}
+              onDeleteBreakdown={dropPlanner}
+              onOpenSetup={() => setIsSetupOpen(true)}
+              onOpenDebts={() => setCurrentView('debts')}
+            />
+          )}
+          {currentView === 'history' && (
+            <CycleHistory plans={historyPlans} onOpenCycle={(key) => { setCycleOffset(monthsBetween(currentCycle.key, key)); setCurrentView('home'); }} />
+          )}
+          {currentView === 'debts' && (
+            <DebtList debts={debts} cardNames={cardNames} onToggleStatus={handleOpenPayDebt} onEdit={(debt) => { setEditingDebt(debt); setIsDebtModalOpen(true); }} />
+          )}
+          {currentView === 'goals' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-medium text-ink">Goals</h2>
+                <button type="button" onClick={() => { setEditingGoal(null); setIsGoalModalOpen(true); }} className="btn min-h-9 px-3 text-[13px]"><Plus size={15} /> New goal</button>
+              </div>
+              <GoalList goals={goals} onAddFundsClick={(id) => { setSelectedGoalId(id); setFundAmountToAdd(''); setFundError(null); }} onEdit={(goal) => { setEditingGoal(goal); setIsGoalModalOpen(true); }} />
+            </div>
+          )}
         </Suspense>
       </main>
 
-      {/* Bottom Nav - Black with White Active State */}
-      <nav className="fixed bottom-0 left-1/2 z-20 grid w-full max-w-5xl -translate-x-1/2 grid-cols-4 border-x border-t border-zinc-900 bg-black/95 px-1 py-1 pb-safe backdrop-blur-lg">
-        <button onClick={() => setCurrentView('dashboard')} className={`flex flex-col items-center justify-center p-2 rounded-lg transition-all active:bg-zinc-900 ${currentView === 'dashboard' ? 'text-white' : 'text-zinc-600'}`}>
-          <LayoutDashboard size={20} strokeWidth={currentView === 'dashboard' ? 2.5 : 2} />
-          <span className="text-[10px] mt-1 font-medium tracking-wide">Home</span>
-        </button>
-        <button onClick={() => setCurrentView('list')} className={`flex flex-col items-center justify-center p-2 rounded-lg transition-all active:bg-zinc-900 ${currentView === 'list' ? 'text-white' : 'text-zinc-600'}`}>
-          <ListIcon size={20} strokeWidth={currentView === 'list' ? 2.5 : 2} />
-          <span className="text-[10px] mt-1 font-medium tracking-wide">Transactions</span>
-        </button>
-        <button onClick={() => setCurrentView('debts')} className={`flex flex-col items-center justify-center p-2 rounded-lg transition-all active:bg-zinc-900 ${currentView === 'debts' ? 'text-white' : 'text-zinc-600'}`}>
-          <ArrowRightLeft size={20} strokeWidth={currentView === 'debts' ? 2.5 : 2} />
-          <span className="text-[10px] mt-1 font-medium tracking-wide">Debts</span>
-        </button>
-        <button onClick={() => setIsMoreMenuOpen(true)} className={`flex flex-col items-center justify-center p-2 rounded-lg transition-all active:bg-zinc-900 ${currentView === 'goals' ? 'text-white' : 'text-zinc-600'}`}>
-          <MoreHorizontal size={20} strokeWidth={currentView === 'goals' ? 2.5 : 2} />
-          <span className="text-[10px] mt-1 font-medium tracking-wide">More</span>
-        </button>
+      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-page/95 backdrop-blur pb-safe">
+        <div className="mx-auto grid max-w-5xl grid-cols-5 items-center px-2 pt-1">
+          {navItem('home', 'Home', <Home size={20} />, () => { setCurrentView('home'); setCycleOffset(0); })}
+          {navItem('list', 'Activity', <ListIcon size={20} />)}
+          <div className="flex justify-center">
+            <button type="button" onClick={() => setIsCashOpen(true)} aria-label="Add cash expense" className="flex h-12 w-12 items-center justify-center rounded-full bg-ink text-on-ink transition hover:opacity-90 active:scale-95">
+              <Plus size={22} />
+            </button>
+          </div>
+          {navItem('cards', 'Cards', <CreditCard size={20} />)}
+          <button type="button" onClick={() => setIsMoreMenuOpen(true)} className={`flex flex-col items-center justify-center gap-0.5 rounded-lg py-1.5 text-[11px] transition ${['goals', 'debts', 'history'].includes(currentView) ? 'text-ink' : 'text-ink-3 hover:text-ink-2'}`}>
+            <MoreHorizontal size={20} />
+            More
+          </button>
+        </div>
       </nav>
 
-      {quickAddNotice && (
-        <div aria-live="polite" className="fixed bottom-24 left-1/2 z-40 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 shadow-2xl shadow-black/70">
-          <p className="min-w-0 truncate text-xs text-zinc-300">Added <strong className="text-white">{quickAddNotice.description} · ¥{quickAddNotice.amount.toLocaleString()}</strong></p>
-          <button type="button" onClick={() => void handleUndoQuickAdd()} className="min-h-9 shrink-0 rounded-lg px-2 text-xs font-bold uppercase tracking-wide text-emerald-300 hover:bg-emerald-400/10">Undo</button>
+      {notice && (
+        <div aria-live="polite" className="fixed bottom-24 left-1/2 z-40 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3 text-on-ink animate-slide-up">
+          <p className="min-w-0 truncate text-[13px]">Added {notice.description || notice.category} · {formatYen(notice.amount)}</p>
+          <button type="button" onClick={() => void handleUndoNotice()} className="shrink-0 rounded-lg px-2 py-1 text-[13px] font-medium underline-offset-2 hover:underline">Undo</button>
         </div>
       )}
 
       <Modal isOpen={isMoreMenuOpen} onClose={() => setIsMoreMenuOpen(false)} title="More">
-        <div className="space-y-2">
-          <button
-            type="button"
-            onClick={() => { setIsMoreMenuOpen(false); setCurrentView('goals'); }}
-            className="flex w-full items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-left transition hover:bg-zinc-800"
-          >
-            <div className="rounded-lg bg-zinc-800 p-2 text-zinc-300"><Target size={18} /></div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-zinc-200">Goals</p>
-              <p className="text-xs text-zinc-500">Optional savings targets when you are ready</p>
-            </div>
-            <ChevronRight size={17} className="text-zinc-600" />
-          </button>
-          <button
-            type="button"
-            onClick={() => { setIsMoreMenuOpen(false); setIsSettingsModalOpen(true); }}
-            className="flex w-full items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-left transition hover:bg-zinc-800"
-          >
-            <div className="rounded-lg bg-zinc-800 p-2 text-zinc-300"><Settings size={18} /></div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-zinc-200">Sync & settings</p>
-              <p className="text-xs text-zinc-500">Cloud status, recurring entries and account</p>
-            </div>
-            <ChevronRight size={17} className="text-zinc-600" />
-          </button>
-          <button
-            type="button"
-            onClick={() => { setIsMoreMenuOpen(false); handleExport(); }}
-            className="flex w-full items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4 text-left transition hover:bg-zinc-800"
-          >
-            <div className="rounded-lg bg-zinc-800 p-2 text-zinc-300"><Download size={18} /></div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-zinc-200">Export backup</p>
-              <p className="text-xs text-zinc-500">Download a private JSON copy of your data</p>
-            </div>
-          </button>
+        <div className="-mx-2 space-y-1">
+          {[
+            { icon: <History size={18} />, title: 'Cycle history', note: 'Where each cycle\'s money went', action: () => setCurrentView('history') },
+            { icon: <Target size={18} />, title: 'Goals', note: 'Savings targets', action: () => setCurrentView('goals') },
+            { icon: <ArrowLeftRight size={18} />, title: 'Debts', note: 'Split installments and loans', action: () => setCurrentView('debts') },
+            { icon: <SlidersHorizontal size={18} />, title: 'Setup', note: 'Payday, credit cards and transfer bills', action: () => setIsSetupOpen(true) },
+            { icon: <Settings size={18} />, title: 'Sync and settings', note: 'Account, backup and old recurring entries', action: () => setIsSettingsModalOpen(true) },
+            { icon: <Download size={18} />, title: 'Export backup', note: 'Download a private JSON copy', action: handleExport },
+          ].map((item) => (
+            <button key={item.title} type="button" onClick={() => { setIsMoreMenuOpen(false); item.action(); }} className="flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition hover:bg-subtle">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-subtle text-ink-2">{item.icon}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm text-ink">{item.title}</span>
+                <span className="block text-xs text-ink-3">{item.note}</span>
+              </span>
+              <ChevronRight size={16} className="text-ink-3" />
+            </button>
+          ))}
         </div>
       </Modal>
 
-      <Modal isOpen={isExpenseModalOpen} onClose={closeTransactionModal} title={editingTransaction ? `Edit ${editingTransaction.type}` : confirmingBill ? 'Confirm bill' : `Add ${expensePrefill?.type ?? 'expense'}`}>
+      <Modal isOpen={isCashOpen} onClose={() => setIsCashOpen(false)} title="Cash expense">
+        <CashEntry
+          transactions={transactions}
+          left={isConfigured && currentPlan.record ? currentPlan.left : null}
+          onSave={handleSaveCash}
+          onLogIncome={() => { setIsCashOpen(false); openTransactionForm({ type: 'income' }); }}
+        />
+      </Modal>
+
+      <Modal isOpen={isSetupOpen} onClose={() => setIsSetupOpen(false)} title="Setup" size="lg" closeOnBackdrop={false}>
+        <PlanSetup data={plannerData} legacyRecurringCount={recurringRules.length} onSave={handleSaveSetup} onCancel={() => setIsSetupOpen(false)} />
+      </Modal>
+
+      <Modal isOpen={checkinMode !== null} onClose={() => setCheckinMode(null)} title={checkinMode === 'today' ? 'Start tracking' : 'Payday check-in'} size="lg" closeOnBackdrop={false}>
+        {checkinMode && (
+          <PaydayCheckin
+            mode={checkinMode}
+            plan={currentPlan}
+            data={plannerData}
+            debts={debts}
+            goals={goals}
+            suggestedCarryover={suggestedCarryover(currentCycle, planInput, settings)}
+            onSubmit={handleCheckin}
+            onCancel={() => setCheckinMode(null)}
+          />
+        )}
+      </Modal>
+
+      <Modal isOpen={isBalanceOpen} onClose={() => setIsBalanceOpen(false)} title="Check balance">
+        {isBalanceOpen && (
+          <BalanceCheck
+            plan={currentPlan}
+            savingsInAccount={settings.savingsInAccount ?? true}
+            onSave={handleBalanceAdjust}
+            onCancel={() => setIsBalanceOpen(false)}
+          />
+        )}
+      </Modal>
+
+      <Modal isOpen={editingObligation !== null} onClose={() => setEditingObligation(null)} title={editingObligation?.kind === 'card' ? `${editingObligation.label} bill` : editingObligation?.label ?? ''}>
+        {editingObligation && (
+          <ObligationEditor
+            key={editingObligation.key}
+            obligation={editingObligation}
+            data={plannerData}
+            debts={debts}
+            onSaveCard={async (input, paid) => { await saveCardBill(input, paid); setEditingObligation(null); }}
+            onSaveBill={async (bill, dueDate, amount, paid) => {
+              await saveBillPayment(bill, dueDate, { amount, confirmed: true, paidAt: paid ? editingObligation.billPayment?.paidAt ?? new Date().toISOString() : undefined });
+              setEditingObligation(null);
+            }}
+            onPayDebt={handleOpenPayDebt}
+            onCancel={() => setEditingObligation(null)}
+          />
+        )}
+      </Modal>
+
+      <Modal isOpen={isTransactionModalOpen} onClose={closeTransactionForm} title={editingTransaction ? 'Edit entry' : transactionPrefill?.type === 'income' ? 'Add income' : 'Add entry'}>
         <ExpenseForm
+          key={editingTransaction?.id ?? transactionPrefill?.type ?? 'new'}
           transaction={editingTransaction ?? undefined}
-          prefill={editingTransaction ? undefined : expensePrefill ?? undefined}
+          prefill={editingTransaction ? undefined : transactionPrefill ?? undefined}
           existingTransactions={transactions}
           onSave={handleSaveTransaction}
-          onCancel={closeTransactionModal}
+          onCancel={closeTransactionForm}
           onDelete={editingTransaction ? () => {
             const id = editingTransaction.id;
-            closeTransactionModal();
-            handleDeleteTransaction(id);
+            closeTransactionForm();
+            setPendingDelete({ type: 'transaction', id });
           } : undefined}
         />
       </Modal>
-      <Modal isOpen={isDebtModalOpen} onClose={() => { setIsDebtModalOpen(false); setEditingDebt(null); }} title={editingDebt ? "Edit Debt" : "Add Debt"}>
+
+      <Modal isOpen={isDebtModalOpen} onClose={() => { setIsDebtModalOpen(false); setEditingDebt(null); }} title={editingDebt ? 'Edit debt' : 'Add debt'}>
         <DebtForm
           debt={editingDebt ?? undefined}
           onSave={handleSaveDebt}
@@ -875,11 +843,12 @@ const App: React.FC = () => {
             const id = editingDebt.id;
             setIsDebtModalOpen(false);
             setEditingDebt(null);
-            handleDeleteDebt(id);
+            setPendingDelete({ type: 'debt', id });
           } : undefined}
         />
       </Modal>
-      <Modal isOpen={isGoalModalOpen} onClose={() => { setIsGoalModalOpen(false); setEditingGoal(null); }} title={editingGoal ? "Edit Goal" : "New Goal"}>
+
+      <Modal isOpen={isGoalModalOpen} onClose={() => { setIsGoalModalOpen(false); setEditingGoal(null); }} title={editingGoal ? 'Edit goal' : 'New goal'}>
         <GoalForm
           goal={editingGoal ?? undefined}
           onSave={handleSaveGoal}
@@ -888,207 +857,66 @@ const App: React.FC = () => {
             const id = editingGoal.id;
             setIsGoalModalOpen(false);
             setEditingGoal(null);
-            handleDeleteGoal(id);
+            setPendingDelete({ type: 'goal', id });
           } : undefined}
         />
       </Modal>
-      
-      <Modal isOpen={isAddFundsModalOpen} onClose={() => { setIsAddFundsModalOpen(false); setFundError(null); }} title="Add Funds">
+
+      <Modal isOpen={selectedGoalId !== null} onClose={() => setSelectedGoalId(null)} title="Add to goal">
         <form onSubmit={handleSubmitFunds} className="space-y-4">
           <div>
-            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Amount (¥)</label>
-            <div className="relative">
-              <DollarSign className="absolute left-3 top-3.5 text-zinc-400" size={18} />
-              <input type="number" min="1" step="1" required autoFocus value={fundAmountToAdd} onChange={(e) => { setFundAmountToAdd(e.target.value); setFundError(null); }} className="w-full pl-10 h-12 bg-zinc-900 border border-zinc-800 rounded-lg text-white text-lg font-bold focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 outline-none" />
-            </div>
-            {fundError && <p className="text-[10px] text-red-400 mt-1.5">{fundError}</p>}
+            <label htmlFor="fund-amount" className="field-label">Amount</label>
+            <AmountInput id="fund-amount" value={fundAmountToAdd} onChange={(value) => { setFundAmountToAdd(value); setFundError(null); }} size="lg" autoFocus />
+            {fundError && <p className="mt-1.5 text-xs text-bad">{fundError}</p>}
           </div>
-          <button type="submit" className="w-full h-12 bg-white hover:bg-zinc-200 text-black font-bold rounded-lg text-xs uppercase tracking-wider">Confirm</button>
+          <button type="submit" className="btn-primary w-full">Add</button>
         </form>
       </Modal>
 
-      <Modal isOpen={isPayDebtModalOpen} onClose={() => { setIsPayDebtModalOpen(false); setDebtPaymentError(null); }} title="Pay Debt">
-        <form onSubmit={handleSubmitDebtPayment} className="space-y-4">
-          <div>
-            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Principal amount (¥)</label>
-            <div className="relative">
-              <DollarSign className="absolute left-3 top-3.5 text-zinc-400" size={18} />
-              <input type="number" min="1" max={selectedDebt?.amount} step="1" required autoFocus value={debtPaymentAmount} onChange={(e) => { setDebtPaymentAmount(e.target.value); setDebtPaymentError(null); }} className="w-full pl-10 h-12 bg-zinc-900 border border-zinc-800 rounded-lg text-white text-lg font-bold focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 outline-none" />
+      <Modal isOpen={selectedDebt !== null} onClose={() => setSelectedDebtId(null)} title={selectedDebt ? `Pay ${selectedDebt.person}` : 'Pay debt'}>
+        {selectedDebt && (
+          <form onSubmit={handleSubmitDebtPayment} className="space-y-4">
+            <div>
+              <label htmlFor="debt-principal" className="field-label">Principal</label>
+              <AmountInput id="debt-principal" value={debtPaymentAmount} onChange={(value) => { setDebtPaymentAmount(value); setDebtPaymentError(null); }} size="lg" autoFocus />
+              {debtPaymentError && <p className="mt-1.5 text-xs text-bad">{debtPaymentError}</p>}
             </div>
-            {debtPaymentError && <p className="text-[10px] text-red-400 mt-1.5">{debtPaymentError}</p>}
-          </div>
-          {selectedDebt && (
-            <div className="rounded-lg bg-zinc-950 border border-zinc-800 p-3 space-y-1.5 text-[11px]">
-              <div className="flex justify-between text-zinc-500"><span>Outstanding balance</span><span>¥{selectedDebt.amount.toLocaleString()}</span></div>
-              <div className="flex justify-between text-zinc-500"><span>Estimated monthly interest</span><span>¥{paymentInterestPreview.toLocaleString()}</span></div>
-              <div className="flex justify-between text-zinc-500"><span>Total cash payment</span><span>¥{(paymentPrincipalPreview + paymentInterestPreview).toLocaleString()}</span></div>
-              <div className="flex justify-between text-zinc-200 font-bold pt-1.5 border-t border-zinc-800"><span>New expense recorded</span><span>¥{paymentInterestPreview.toLocaleString()}</span></div>
-              <p className="pt-1 text-[10px] text-zinc-600">Principal reduces the balance only, preventing purchases from being counted twice.</p>
+            <div className="space-y-1.5 rounded-lg bg-subtle p-3 text-[13px]">
+              <div className="flex justify-between text-ink-2"><span>Balance</span><span className="tabular-nums">{formatYen(selectedDebt.amount)}</span></div>
+              <div className="flex justify-between text-ink-2"><span>Interest this month</span><span className="tabular-nums">{formatYen(paymentInterest)}</span></div>
+              <div className="flex justify-between border-t border-line pt-1.5 font-medium text-ink"><span>Paid from this cycle</span><span className="tabular-nums">{formatYen(paymentPrincipal + paymentInterest)}</span></div>
             </div>
-          )}
-          <button type="submit" className="w-full h-12 bg-white hover:bg-zinc-200 text-black font-bold rounded-lg text-xs uppercase tracking-wider shadow-lg">Confirm Payment</button>
-        </form>
+            <button type="submit" className="btn-primary w-full">Record payment</button>
+          </form>
+        )}
       </Modal>
 
-      {/* Delete Confirm */}
-      <Modal
-        isOpen={!!pendingDelete}
-        onClose={() => setPendingDelete(null)}
-        title="Confirm Delete"
-      >
+      <Modal isOpen={pendingDelete !== null} onClose={() => setPendingDelete(null)} title="Delete">
         <div className="space-y-4">
-          <p className="text-sm text-zinc-300">
-            {pendingDelete?.type === 'transaction' && 'Delete this transaction?'}
+          <p className="text-sm text-ink-2">
+            {pendingDelete?.type === 'transaction' && 'Delete this entry?'}
             {pendingDelete?.type === 'debt' && 'Delete this debt?'}
             {pendingDelete?.type === 'goal' && 'Delete this goal?'}
-            {pendingDelete?.type === 'recurring' && 'Stop this recurring transaction? Existing entries will remain.'}
+            {pendingDelete?.type === 'recurring' && 'Stop this recurring entry? Entries it already added stay.'}
           </p>
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => setPendingDelete(null)}
-              className="flex-1 h-11 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 font-bold text-xs uppercase tracking-wide rounded-lg transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={confirmDelete}
-              className="flex-1 h-11 bg-red-500 hover:bg-red-400 text-white font-bold text-xs uppercase tracking-wide rounded-lg shadow-lg transition-colors"
-            >
-              Delete
-            </button>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setPendingDelete(null)} className="btn flex-1">Cancel</button>
+            <button type="button" onClick={() => void confirmDelete()} className="inline-flex min-h-11 flex-1 items-center justify-center rounded-lg bg-bad px-4 text-sm font-medium text-on-ink transition hover:opacity-90">Delete</button>
           </div>
         </div>
       </Modal>
 
-      <Modal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} title="Sync & Settings">
+      <Modal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} title="Sync and settings">
         <SettingsPanel
           email={session?.user.email ?? null}
           sync={syncState}
           recurringRules={recurringRules}
-          habitPatterns={habitPatterns}
-          remindersEnabled={remindersEnabled}
           onRetrySync={() => void loadData(false)}
-          onDeleteRecurring={(id) => {
-            setIsSettingsModalOpen(false);
-            setPendingDelete({ type: 'recurring', id });
-          }}
-          onToggleRecurringConfirmation={(id) => void handleToggleRecurringConfirmation(id)}
+          onDeleteRecurring={(id) => { setIsSettingsModalOpen(false); setPendingDelete({ type: 'recurring', id }); }}
           onExport={handleExport}
           onImport={handleImport}
-          onToggleReminders={handleToggleReminders}
-          onToggleHabit={handleToggleHabit}
           onSignOut={() => void handleSignOut()}
         />
-      </Modal>
-
-      <style>{`
-        .pb-safe { padding-bottom: env(safe-area-inset-bottom, 20px); }
-        @keyframes slide-up { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-        .animate-slide-up { animation: slide-up 0.2s ease-out forwards; }
-        .animate-fade-in { animation: fadeIn 0.2s ease-in; }
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-      `}</style>
-
-      <Modal
-        isOpen={!!habitReminder}
-        onClose={() => {
-          if (!habitReminder) return;
-          const today = todayLocal();
-          const s = habitStateById[habitReminder.habitId] ?? {
-            habitId: habitReminder.habitId,
-            lastRemindedDate: null,
-            snoozedUntil: null,
-            dismissCountRecent: 0,
-          };
-          const next = { ...habitStateById, [habitReminder.habitId]: { ...s, lastRemindedDate: today } };
-          setHabitStateById(next);
-          void saveHabitReminderState(next);
-          setHabitReminder(null);
-        }}
-        title="Reminder"
-      >
-        {habitReminder && (
-          <div className="space-y-4">
-            <p className="text-sm text-zinc-300">{habitReminder.message}</p>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  const today = todayLocal();
-                  const s = habitStateById[habitReminder.habitId] ?? {
-                    habitId: habitReminder.habitId,
-                    lastRemindedDate: null,
-                    snoozedUntil: null,
-                    dismissCountRecent: 0,
-                  };
-                  const next = { ...habitStateById, [habitReminder.habitId]: { ...s, lastRemindedDate: today, dismissCountRecent: 0 } };
-                  setHabitStateById(next);
-                  void saveHabitReminderState(next);
-
-                  openTransactionModal({
-                    type: 'expense',
-                    category: habitReminder.category,
-                    amount: habitReminder.amount,
-                    description: habitReminder.description,
-                    date: today,
-                  });
-                  setHabitReminder(null);
-                }}
-                className="flex-1 h-11 bg-white hover:bg-zinc-200 text-black font-bold text-xs uppercase tracking-wide rounded-lg transition-colors"
-              >
-                Add
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const today = todayLocal();
-                  const s = habitStateById[habitReminder.habitId] ?? {
-                    habitId: habitReminder.habitId,
-                    lastRemindedDate: null,
-                    snoozedUntil: null,
-                    dismissCountRecent: 0,
-                  };
-                  const snoozeDays = habitReminder.intervalType === 'monthly'
-                    ? 27
-                    : habitReminder.intervalType === 'weekly'
-                      ? 6
-                      : 0;
-                  const next = {
-                    ...habitStateById,
-                    [habitReminder.habitId]: {
-                      ...s,
-                      lastRemindedDate: today,
-                      snoozedUntil: addDaysLocal(today, snoozeDays),
-                      dismissCountRecent: 0,
-                    },
-                  };
-                  setHabitStateById(next);
-                  void saveHabitReminderState(next);
-                  setHabitReminder(null);
-                }}
-                className="flex-1 h-11 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-400 font-bold text-xs uppercase tracking-wide rounded-lg transition-colors"
-              >
-                Not today
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setHabitPatternsState((prev) => {
-                  const updated = prev.map((p) => (p.habitId === habitReminder.habitId ? { ...p, active: false } : p));
-                  void saveHabitPatterns(updated);
-                  return updated;
-                });
-                setHabitReminder(null);
-              }}
-              className="w-full h-11 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 text-zinc-500 font-bold text-xs uppercase tracking-wide rounded-lg transition-colors"
-            >
-              Stop reminding
-            </button>
-          </div>
-        )}
       </Modal>
     </div>
   );

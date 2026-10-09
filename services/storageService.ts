@@ -6,11 +6,12 @@ const STORAGE_KEY = 'smartspend_data_v2';
 const DEBT_STORAGE_KEY = 'smartspend_debts_v2';
 const GOAL_STORAGE_KEY = 'smartspend_goals_v1';
 const RECURRING_KEY = 'smartspend_recurring_v1';
+const PLANNER_KEY = 'smartspend_planner_v1';
 const OUTBOX_KEY = 'smartspend_sync_outbox_v1';
 const SYNC_EVENT = 'smartspend:sync-state';
 const legacyMarkerKey = (baseKey: string, userId: string) => `${baseKey}:legacy-adopted:${userId}`;
 
-type SyncTable = 'transactions' | 'debts' | 'goals' | 'recurring_transactions';
+type SyncTable = 'transactions' | 'debts' | 'goals' | 'recurring_transactions' | 'planner_records';
 
 interface PendingMutation {
   mutationId: string;
@@ -57,9 +58,17 @@ const emitSyncSnapshot = (patch: Partial<SyncSnapshot> = {}) => {
   window.dispatchEvent(new CustomEvent<SyncSnapshot>(SYNC_EVENT, { detail: syncSnapshot }));
 };
 
+const PLANNER_MIGRATION = 'supabase/migrations/20261009_pay_cycle_planner.sql';
+
 const errorMessage = (error: unknown) => {
-  if (error && typeof error === 'object' && 'message' in error) return String(error.message);
-  return error instanceof Error ? error.message : 'Cloud sync failed';
+  const raw = error && typeof error === 'object' && 'message' in error
+    ? String(error.message)
+    : error instanceof Error ? error.message : 'Cloud sync failed';
+  // A missing table or column means the database is older than the app.
+  if (/planner_records|cardId/.test(raw) && /does not exist|schema cache|Could not find/i.test(raw)) {
+    return `The database needs an update. Run ${PLANNER_MIGRATION} in the Supabase SQL editor, then tap Sync now.`;
+  }
+  return raw;
 };
 
 const getUserId = async () => {
@@ -247,6 +256,9 @@ export const syncPendingChanges = async (): Promise<SyncSnapshot> => {
       return getSyncSnapshot();
     }
 
+    // Each change is tried on its own: one that keeps failing stays queued
+    // without holding back the others.
+    let firstError: unknown = null;
     const pendingForUser = getOutbox().filter((item) => item.userId === userId);
     for (const mutation of pendingForUser) {
       try {
@@ -254,9 +266,12 @@ export const syncPendingChanges = async (): Promise<SyncSnapshot> => {
         const remaining = getOutbox().filter((item) => item.mutationId !== mutation.mutationId);
         localStorage.setItem(OUTBOX_KEY, JSON.stringify(remaining));
       } catch (error) {
-        emitSyncSnapshot({ isSyncing: false, lastError: errorMessage(error) });
-        return getSyncSnapshot();
+        firstError ??= error;
       }
+    }
+    if (firstError) {
+      emitSyncSnapshot({ isSyncing: false, lastError: errorMessage(firstError) });
+      return getSyncSnapshot();
     }
 
     emitSyncSnapshot({
@@ -272,11 +287,12 @@ export const syncPendingChanges = async (): Promise<SyncSnapshot> => {
   return activeSync;
 };
 
-const prepareCloudRead = async () => {
+/** Pushes queued changes first. A table with changes still queued is read from the device instead. */
+const prepareCloudRead = async (table: SyncTable) => {
   if (!supabase) return null;
   const userId = await getRequiredUserId();
   const snapshot = await syncPendingChanges();
-  if (getOutbox().some((item) => item.userId === userId)) {
+  if (getOutbox().some((item) => item.userId === userId && item.table === table)) {
     throw new Error(snapshot.lastError ?? 'Some changes are still waiting to sync');
   }
   return userId;
@@ -294,7 +310,7 @@ export const getTransactions = async (): Promise<Transaction[]> => {
   if (!supabase) return local;
 
   try {
-    await prepareCloudRead();
+    await prepareCloudRead('transactions');
     const { data, error } = await supabase
       .from('transactions')
       .select('*')
@@ -357,7 +373,7 @@ export const getRecurringTransactions = async (): Promise<RecurringTransaction[]
   if (!supabase) return local;
 
   try {
-    await prepareCloudRead();
+    await prepareCloudRead('recurring_transactions');
     const { data, error } = await supabase
       .from('recurring_transactions')
       .select('*')
@@ -450,7 +466,7 @@ export const getDebts = async (): Promise<Debt[]> => {
   if (!supabase) return local;
 
   try {
-    await prepareCloudRead();
+    await prepareCloudRead('debts');
     const { data, error } = await supabase.from('debts').select('*').eq('user_id', userId);
     if (error) throw error;
     const remote = (data ?? []).map((row) => stripOwner(row as Debt & { user_id?: string }));
@@ -488,7 +504,7 @@ export const getGoals = async (): Promise<Goal[]> => {
   if (!supabase) return local;
 
   try {
-    await prepareCloudRead();
+    await prepareCloudRead('goals');
     const { data, error } = await supabase.from('goals').select('*').eq('user_id', userId);
     if (error) throw error;
     const remote = (data ?? []).map((row) => stripOwner(row as Goal & { user_id?: string }));
@@ -520,8 +536,54 @@ export const deleteGoal = async (id: string): Promise<void> => {
   if (userId) await syncMutation({ userId, table: 'goals', action: 'delete', recordId: id });
 };
 
+export type PlannerKind = 'settings' | 'card' | 'bill' | 'statement' | 'bill_payment' | 'cycle' | 'card_usage' | 'card_breakdown';
+
+// Pay-cycle planner entities share one table with a JSON body, so new fields
+// never need a schema change. The id is unique per user, not globally.
+export interface PlannerRecord {
+  id: string;
+  kind: PlannerKind;
+  data: unknown;
+  updated_at: string;
+}
+
+export const getPlannerRecords = async (): Promise<PlannerRecord[]> => {
+  const userId = supabase ? await getRequiredUserId() : null;
+  const local = readLocal<PlannerRecord[]>(PLANNER_KEY, userId, []);
+  if (!supabase) return local;
+
+  try {
+    await prepareCloudRead('planner_records');
+    const { data, error } = await supabase.from('planner_records').select('id, kind, data, updated_at').eq('user_id', userId);
+    if (error) throw error;
+    const remote = (data ?? []) as PlannerRecord[];
+    writeLocal(PLANNER_KEY, userId, remote);
+    noteCloudReadSuccess();
+    return remote;
+  } catch (error) {
+    noteCloudReadFailure(error);
+    return local;
+  }
+};
+
+export const savePlannerRecord = async (kind: PlannerKind, id: string, data: unknown): Promise<PlannerRecord> => {
+  const userId = supabase ? await getRequiredUserId() : null;
+  const record: PlannerRecord = { id, kind, data, updated_at: new Date().toISOString() };
+  const current = readLocal<PlannerRecord[]>(PLANNER_KEY, userId, []);
+  writeLocal(PLANNER_KEY, userId, [record, ...current.filter((item) => item.id !== id)]);
+  if (userId) await syncMutation({ userId, table: 'planner_records', action: 'upsert', recordId: id, record: { ...record } });
+  return record;
+};
+
+export const deletePlannerRecord = async (id: string): Promise<void> => {
+  const userId = supabase ? await getRequiredUserId() : null;
+  const current = readLocal<PlannerRecord[]>(PLANNER_KEY, userId, []);
+  writeLocal(PLANNER_KEY, userId, current.filter((item) => item.id !== id));
+  if (userId) await syncMutation({ userId, table: 'planner_records', action: 'delete', recordId: id });
+};
+
 export const clearLocalFinancialData = (userId: string) => {
-  [STORAGE_KEY, DEBT_STORAGE_KEY, GOAL_STORAGE_KEY, RECURRING_KEY]
+  [STORAGE_KEY, DEBT_STORAGE_KEY, GOAL_STORAGE_KEY, RECURRING_KEY, PLANNER_KEY]
     .forEach((key) => localStorage.removeItem(scopedKey(key, userId)));
   const remaining = getOutbox().filter((item) => item.userId !== userId);
   localStorage.setItem(OUTBOX_KEY, JSON.stringify(remaining));

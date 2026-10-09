@@ -2,8 +2,72 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Color tokens as RGB channels so Tailwind opacity modifiers (bg-ink/10) work. */
+:root {
+  color-scheme: light;
+  --page: 245 244 240;
+  --card: 255 255 255;
+  --subtle: 240 239 234;
+  --line: 226 224 217;
+  --line-strong: 200 197 188;
+  --ink: 28 28 26;
+  --ink-2: 95 94 90;
+  --ink-3: 136 135 128;
+  --on-ink: 255 255 255;
+  --accent: 24 95 165;
+  --accent-soft: 230 241 251;
+  --good: 59 109 17;
+  --good-soft: 234 243 222;
+  --good-mark: 99 153 34;
+  --bad: 163 45 45;
+  --bad-soft: 252 235 235;
+  --warn: 133 79 11;
+  --warn-soft: 250 238 218;
+  /* Chart series, fixed order (validated for color-vision deficiency on these surfaces) */
+  --series-1: 42 120 214;
+  --series-2: 235 104 52;
+  --series-3: 27 175 122;
+  --series-4: 237 161 0;
+  --series-5: 232 123 164;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: 26 26 25;
+    --card: 38 38 36;
+    --subtle: 48 48 46;
+    --line: 58 58 55;
+    --line-strong: 82 82 78;
+    --ink: 240 239 234;
+    --ink-2: 180 178 169;
+    --ink-3: 136 135 128;
+    --on-ink: 26 26 25;
+    --accent: 133 183 235;
+    --accent-soft: 12 68 124;
+    --good: 151 196 89;
+    --good-soft: 39 80 10;
+    --good-mark: 151 196 89;
+    --bad: 240 149 149;
+    --bad-soft: 121 31 31;
+    --warn: 239 159 39;
+    --warn-soft: 99 56 6;
+    --series-1: 57 135 229;
+    --series-2: 217 89 38;
+    --series-3: 25 158 112;
+    --series-4: 201 133 0;
+    --series-5: 213 81 129;
+  }
+}
+
+body {
+  background-color: rgb(var(--page));
+  -webkit-tap-highlight-color: transparent;
+}
+
 ::-webkit-scrollbar {
-  width: 3px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
@@ -11,13 +75,8 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #27272a;
+  background: rgb(var(--line-strong));
   border-radius: 2px;
-}
-
-body {
-  background-color: #000;
-  -webkit-tap-highlight-color: transparent;
 }
 
 input,
@@ -36,6 +95,35 @@ input[type='number'] {
   -moz-appearance: textfield;
 }
 
-input[type='date']::-webkit-calendar-picker-indicator {
-  filter: invert(1);
+@layer components {
+  .field {
+    @apply h-11 w-full rounded-lg border border-line bg-card px-3 text-ink outline-none transition placeholder:text-ink-3 focus:border-accent focus:ring-1 focus:ring-accent;
+  }
+  .field-label {
+    @apply mb-1.5 block text-[13px] text-ink-2;
+  }
+  .btn {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-line-strong px-4 text-sm font-medium text-ink transition hover:bg-subtle active:scale-[0.98] disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-medium text-on-ink transition hover:opacity-90 active:scale-[0.98] disabled:opacity-50;
+  }
+  .btn-ghost {
+    @apply inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg px-2.5 text-[13px] text-ink-2 transition hover:bg-subtle hover:text-ink;
+  }
+  .card {
+    @apply rounded-xl border border-line bg-card;
+  }
+  .chip {
+    @apply inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-line-strong px-3 text-[13px] text-ink transition hover:bg-subtle;
+  }
+  .chip-on {
+    @apply inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-transparent bg-accent-soft px-3 text-[13px] text-accent;
+  }
 }
+
+@keyframes slide-up { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.animate-slide-up { animation: slide-up 0.2s ease-out both; }
+.animate-fade-in { animation: fade-in 0.15s ease-out both; }
+.pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 6px); }

@@ -49,22 +49,22 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal, onDe
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Goal Name</label>
+        <label className="block text-xs font-medium text-ink-3 mb-1.5">Goal Name</label>
         <div className="relative">
-          <Target className="absolute left-3 top-3.5 text-zinc-400" size={18} />
+          <Target className="absolute left-3 top-3.5 text-ink-2" size={18} />
           <input
             type="text"
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Europe Trip"
-            className="w-full pl-10 h-12 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500 text-zinc-200 outline-none text-sm"
+            className="w-full pl-10 h-12 bg-subtle border border-line rounded-lg focus:border-accent focus:ring-1 focus:ring-accent text-ink outline-none text-sm"
           />
         </div>
       </div>
 
       <div>
-        <label className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-zinc-500">Icon</label>
+        <label className="mb-1.5 block text-xs font-medium text-ink-3">Icon</label>
         <div className="grid grid-cols-4 gap-2">
           {GOAL_ICON_OPTIONS.map((option) => (
             <button
@@ -73,7 +73,7 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal, onDe
               onClick={() => setIcon(option.id)}
               aria-label={`${option.label} goal icon`}
               aria-pressed={icon === option.id}
-              className={`flex min-h-11 flex-col items-center justify-center gap-1 rounded-lg border text-[9px] font-semibold transition ${icon === option.id ? 'border-zinc-300 bg-zinc-700 text-white' : 'border-zinc-700 bg-zinc-800 text-zinc-500 hover:border-zinc-600'}`}
+              className={`flex min-h-11 flex-col items-center justify-center gap-1 rounded-lg border text-xs font-medium transition ${icon === option.id ? 'border-line-strong bg-line text-ink' : 'border-line bg-subtle text-ink-3 hover:border-line-strong'}`}
             >
               <GoalIcon icon={option.id} size={15} /> {option.label}
             </button>
@@ -83,7 +83,7 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal, onDe
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Target (¥)</label>
+          <label className="block text-xs font-medium text-ink-3 mb-1.5">Target (¥)</label>
           <input
             type="number"
             min="1"
@@ -92,11 +92,11 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal, onDe
             value={targetAmount}
             onChange={(e) => setTargetAmount(e.target.value)}
             placeholder="1000000"
-            className="w-full h-12 px-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 text-zinc-200 outline-none text-sm"
+            className="w-full h-12 px-3 bg-subtle border border-line rounded-lg focus:border-accent text-ink outline-none text-sm"
           />
         </div>
         <div>
-          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Saved (¥)</label>
+          <label className="block text-xs font-medium text-ink-3 mb-1.5">Saved (¥)</label>
           <input
             type="number"
             min="0"
@@ -104,15 +104,15 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal, onDe
             value={currentAmount}
             onChange={(e) => setCurrentAmount(e.target.value)}
             placeholder="0"
-            className="w-full h-12 px-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 text-zinc-200 outline-none text-sm"
+            className="w-full h-12 px-3 bg-subtle border border-line rounded-lg focus:border-accent text-ink outline-none text-sm"
           />
         </div>
       </div>
 
       <div>
-        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Monthly Save (¥)</label>
+        <label className="block text-xs font-medium text-ink-3 mb-1.5">Monthly Save (¥)</label>
         <div className="relative">
-           <TrendingUp className="absolute left-3 top-3.5 text-zinc-400" size={18} />
+           <TrendingUp className="absolute left-3 top-3.5 text-ink-2" size={18} />
            <input
             type="number"
             min="0"
@@ -120,31 +120,31 @@ export const GoalForm: React.FC<GoalFormProps> = ({ onSave, onCancel, goal, onDe
             value={monthlyContribution}
             onChange={(e) => setMonthlyContribution(e.target.value)}
             placeholder="Projected"
-            className="w-full pl-10 h-12 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 text-zinc-200 outline-none text-sm"
+            className="w-full pl-10 h-12 bg-subtle border border-line rounded-lg focus:border-accent text-ink outline-none text-sm"
           />
         </div>
       </div>
 
       <div>
-        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Deadline</label>
+        <label className="block text-xs font-medium text-ink-3 mb-1.5">Deadline</label>
         <input
           type="date"
           value={deadline}
           onChange={(e) => setDeadline(e.target.value)}
-          className="w-full h-12 px-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 text-zinc-200 outline-none text-sm"
+          className="w-full h-12 px-3 bg-subtle border border-line rounded-lg focus:border-accent text-ink outline-none text-sm"
         />
       </div>
 
-      {error && <p className="text-[10px] text-red-400">{error}</p>}
+      {error && <p className="text-xs text-bad">{error}</p>}
 
       <div className="flex gap-3 pt-2">
-        <button type="button" onClick={onCancel} className="flex-1 h-12 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-400 font-bold text-xs uppercase tracking-wide rounded-lg transition-colors">Cancel</button>
-        <button type="submit" className="flex-1 h-12 bg-white hover:bg-zinc-200 text-zinc-950 font-bold text-xs uppercase tracking-wide rounded-lg shadow-lg transition-colors">
+        <button type="button" onClick={onCancel} className="flex-1 h-12 bg-card hover:bg-subtle border border-line text-ink-2 font-medium text-xs rounded-lg transition-colors">Cancel</button>
+        <button type="submit" className="flex-1 h-12 bg-ink hover:opacity-90 text-on-ink font-medium text-xs rounded-lg transition-colors">
           {goal ? 'Update' : 'Create'}
         </button>
       </div>
       {goal && onDelete && (
-        <button type="button" onClick={onDelete} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10 hover:text-rose-300">
+        <button type="button" onClick={onDelete} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg text-xs font-medium text-bad transition hover:bg-bad-soft hover:text-bad">
           <Trash2 size={14} /> Delete goal
         </button>
       )}

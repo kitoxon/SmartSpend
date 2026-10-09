@@ -1,5 +1,5 @@
 {
-  "name": "SmartSpend",
-  "description": "An intelligent daily expense tracker featuring spending visualization, detailed categorization, and AI-powered financial insights to help you save better.",
+  "name": "Runway",
+  "description": "A pay-cycle money planner: log cash spending, check in on payday with card and transfer bills, and see what is free until the next payday.",
   "requestFramePermissions": []
 }

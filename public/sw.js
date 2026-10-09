@@ -1,7 +1,7 @@
 // Simple offline-first caching for the app shell and static assets.
 const APP_SHELL = ['/', '/index.html', '/manifest.json'];
-const STATIC_CACHE = 'smartspend-static-v3';
-const RUNTIME_CACHE = 'smartspend-runtime-v3';
+const STATIC_CACHE = 'smartspend-static-v4';
+const RUNTIME_CACHE = 'smartspend-runtime-v4';
 
 const offlineResponse = async () => {
   const cached = await caches.match('/index.html');

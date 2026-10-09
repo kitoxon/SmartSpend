@@ -64,7 +64,7 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt, onDe
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
-        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Balance (¥)</label>
+        <label className="block text-xs font-medium text-ink-3 mb-1.5">Balance (¥)</label>
         <input
           type="number"
           min={debt ? '0' : '1'}
@@ -74,25 +74,25 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt, onDe
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
           placeholder="300000"
-          className="w-full h-14 px-4 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500 text-2xl font-bold text-white outline-none"
+          className="w-full h-14 px-4 bg-subtle border border-line rounded-lg focus:border-accent focus:ring-1 focus:ring-accent text-2xl font-medium text-ink outline-none"
         />
       </div>
 
       <div>
-        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Creditor Name</label>
+        <label className="block text-xs font-medium text-ink-3 mb-1.5">Creditor Name</label>
         <input
           type="text"
           required
           value={person}
           onChange={(e) => setPerson(e.target.value)}
           placeholder="e.g. Bank Name"
-          className="w-full h-12 px-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500 text-zinc-200 outline-none text-sm"
+          className="w-full h-12 px-3 bg-subtle border border-line rounded-lg focus:border-accent focus:ring-1 focus:ring-accent text-ink outline-none text-sm"
         />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Interest (%)</label>
+          <label className="block text-xs font-medium text-ink-3 mb-1.5">Interest (%)</label>
           <input
             type="number"
             min="0"
@@ -101,11 +101,11 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt, onDe
             onChange={(e) => setInterestRate(e.target.value)}
             placeholder="15.0"
             step="0.1"
-            className="w-full h-12 px-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 text-zinc-200 outline-none text-sm"
+            className="w-full h-12 px-3 bg-subtle border border-line rounded-lg focus:border-accent text-ink outline-none text-sm"
           />
         </div>
         <div>
-           <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Min Pay (¥)</label>
+           <label className="block text-xs font-medium text-ink-3 mb-1.5">Min Pay (¥)</label>
           <input
             type="number"
             min="1"
@@ -113,18 +113,18 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt, onDe
             value={minimumPayment}
             onChange={(e) => setMinimumPayment(e.target.value)}
             placeholder="¥"
-            className="w-full h-12 px-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 text-zinc-200 outline-none text-sm"
+            className="w-full h-12 px-3 bg-subtle border border-line rounded-lg focus:border-accent text-ink outline-none text-sm"
           />
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
-            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Category</label>
+            <label className="block text-xs font-medium text-ink-3 mb-1.5">Category</label>
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value as DebtCategory)}
-              className="w-full h-12 px-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 text-zinc-200 outline-none text-sm appearance-none"
+              className="w-full h-12 px-3 bg-subtle border border-line rounded-lg focus:border-accent text-ink outline-none text-sm appearance-none"
             >
                <option value="Credit Card">Credit Card</option>
                <option value="Loan">Loan</option>
@@ -134,27 +134,27 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt, onDe
             </select>
         </div>
         <div>
-           <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">Due Date</label>
+           <label className="block text-xs font-medium text-ink-3 mb-1.5">Due Date</label>
             <input
               type="date"
               required
               value={dueDate}
               onChange={(e) => setDueDate(e.target.value)}
-              className="w-full h-12 px-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-zinc-500 text-zinc-200 outline-none text-sm"
+              className="w-full h-12 px-3 bg-subtle border border-line rounded-lg focus:border-accent text-ink outline-none text-sm"
             />
         </div>
       </div>
 
-      {error && <p className="text-[10px] text-red-400">{error}</p>}
+      {error && <p className="text-xs text-bad">{error}</p>}
 
       <div className="flex gap-3 pt-2">
-        <button type="button" onClick={onCancel} className="flex-1 h-12 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-400 font-bold text-xs uppercase tracking-wide rounded-lg transition-colors">Cancel</button>
-        <button type="submit" className="flex-1 h-12 bg-white hover:bg-zinc-200 text-zinc-950 font-bold text-xs uppercase tracking-wide rounded-lg shadow-lg transition-colors">
+        <button type="button" onClick={onCancel} className="flex-1 h-12 bg-card hover:bg-subtle border border-line text-ink-2 font-medium text-xs rounded-lg transition-colors">Cancel</button>
+        <button type="submit" className="flex-1 h-12 bg-ink hover:opacity-90 text-on-ink font-medium text-xs rounded-lg transition-colors">
           {debt ? 'Update Debt' : 'Add Debt'}
         </button>
       </div>
       {debt && onDelete && (
-        <button type="button" onClick={onDelete} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg text-xs font-semibold text-rose-400 transition hover:bg-rose-500/10 hover:text-rose-300">
+        <button type="button" onClick={onDelete} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg text-xs font-medium text-bad transition hover:bg-bad-soft hover:text-bad">
           <Trash2 size={14} /> Delete debt
         </button>
       )}
