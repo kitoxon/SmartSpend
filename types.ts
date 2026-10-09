@@ -153,20 +153,23 @@ export interface CardUsage {
 }
 
 /**
- * Where a card's month of purchases went, from an imported history (PayPay).
+ * Where a card's month of purchases went, from an imported PayPay history or
+ * Vpass card statement.
  * For understanding a bill only: it never becomes expenses in the plan.
  */
 export interface CardBreakdown {
   id: string;
   cardId: string;
   usageMonth: string;
-  source: 'paypay';
+  source: 'paypay' | 'vpass';
   importedAt: string;
   firstDate: string;
   lastDate: string;
   payments: number;
-  charged: number; // Charged to this card
+  charged: number; // Purchases on this card
   paidOtherWays: number; // PayPay Points and Balance, not on the card
+  billed?: number; // From a card statement: this month's payment
+  revolving?: boolean; // Statement lines on リボ払い
   categories: { label: string; amount: number; count: number }[];
   places: { label: string; amount: number; count: number }[];
 }

@@ -1,4 +1,5 @@
 import type { LocalDate } from './jpCalendar';
+import { MerchantGroup, groupMerchants } from './merchants';
 
 // Reads the transaction history CSV exported from the PayPay app (English or
 // Japanese). Imports only explain where a card bill went; they never become
@@ -13,12 +14,6 @@ export interface PaypayPayment {
   other: number; // Part paid with PayPay Points or Balance
 }
 
-export interface ImportedCategory {
-  label: string;
-  amount: number;
-  count: number;
-}
-
 export interface ImportedMonth {
   usageMonth: string;
   firstDate: LocalDate;
@@ -26,8 +21,8 @@ export interface ImportedMonth {
   payments: number; // Payments that used the chosen card
   charged: number; // Total charged to the chosen card
   paidOtherWays: number; // Points and balance across all payments
-  categories: ImportedCategory[];
-  places: ImportedCategory[]; // By brand, largest first
+  categories: MerchantGroup[];
+  places: MerchantGroup[]; // By brand, largest first
 }
 
 /** Minimal RFC 4180 parser: quoted fields, escaped quotes, CRLF. */
@@ -137,28 +132,6 @@ export const parsePaypayHistory = (text: string): PaypayPayment[] => {
 export const creditMethodsIn = (payments: PaypayPayment[]) =>
   [...new Set(payments.map((payment) => payment.creditMethod).filter((method): method is string => Boolean(method)))];
 
-// First matching rule wins; keywords match common Japanese chains.
-const CATEGORY_RULES: [string, RegExp][] = [
-  ['Food delivery', /rocket now|uber ?eats|出前館|wolt|menu|demae/i],
-  ['Convenience stores', /セブン-?イレブン|ローソン|ファミリーマート|ミニストップ|デイリーヤマザキ|セイコーマート|newdays|ポプラ/i],
-  ['Groceries', /イオン|マックスバリュ|西友|ライフ|イトーヨーカドー|サニー|トライアル|ハローデイ|マルショク|ゆめタウン|業務スーパー|スーパー|ドン・?キホーテ|成城石井|カルディ/i],
-  ['Drugstores', /マツモトキヨシ|ウエルシア|ツルハ|サンドラッグ|コスモス|スギ薬局|ダイコク|ドラッグ|薬局/i],
-  ['Restaurants and cafes', /マクドナルド|すき家|吉野家|松屋|ガスト|ロイヤル|サイゼリヤ|スターバックス|starbucks|ドトール|タリーズ|コメダ|ケンタッキー|モスバーガー|丸亀|一蘭|やよい軒|大戸屋|ココイチ|くら寿司|スシロー|はま寿司|caf|カフェ|食堂|ラーメン|そば|うどん|寿司|焼肉|居酒屋|亭/i],
-  ['Transport', /jr|西鉄|地下鉄|交通|タクシー|taxi|\bgo\b|駐車|パーキング|ガソリン|eneos|出光/i],
-  ['Sports and hobbies', /空手|道場|武道|ジム|フィットネス|スポーツ|ゴルフ|ボウリング|プール|ヨガ|gym|sports/i],
-  ['Entertainment', /ソフトバンクホークス|hub|カラオケ|映画|シネマ|ゲーム|ライブ|チケット/i],
-  ['Shopping', /ダイソー|セリア|ユニクロ|gu\b|無印|ニトリ|amazon|楽天|ビックカメラ|ヨドバシ|ロフト|ハンズ/i],
-  ['Vending machines', /ベンディング|自販機|vending/i],
-];
-
-export const categorizeMerchant = (merchant: string) => CATEGORY_RULES.find(([, rule]) => rule.test(merchant))?.[0] ?? 'Other';
-
-/** "ローソン - 平尾一丁目" → "ローソン": branches of a chain count as one place. */
-export const merchantBrand = (merchant: string) => merchant.split(' - ')[0].trim() || merchant;
-
-const rank = (groups: Map<string, ImportedCategory>) =>
-  [...groups.values()].filter((group) => group.amount > 0).sort((a, b) => b.amount - a.amount);
-
 /** One summary per month of the file, counting only what went on `creditMethod`. */
 export const summarizePaypayHistory = (payments: PaypayPayment[], creditMethod: string): ImportedMonth[] => {
   const months = new Map<string, PaypayPayment[]>();
@@ -166,16 +139,7 @@ export const summarizePaypayHistory = (payments: PaypayPayment[], creditMethod: 
 
   return [...months.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([usageMonth, list]) => {
     const onCard = list.filter((payment) => payment.creditMethod === creditMethod && payment.credit !== 0);
-    const categories = new Map<string, ImportedCategory>();
-    const places = new Map<string, ImportedCategory>();
-    for (const payment of onCard) {
-      for (const [groups, key] of [[categories, categorizeMerchant(payment.merchant)], [places, merchantBrand(payment.merchant)]] as const) {
-        const group = groups.get(key) ?? { label: key, amount: 0, count: 0 };
-        group.amount += payment.credit;
-        group.count += payment.credit > 0 ? 1 : 0;
-        groups.set(key, group);
-      }
-    }
+    const { categories, places } = groupMerchants(onCard.map((payment) => ({ merchant: payment.merchant, amount: payment.credit })));
     const dates = list.map((payment) => payment.date).sort();
     return {
       usageMonth,
@@ -184,8 +148,8 @@ export const summarizePaypayHistory = (payments: PaypayPayment[], creditMethod: 
       payments: onCard.filter((payment) => payment.credit > 0).length,
       charged: onCard.reduce((sum, payment) => sum + payment.credit, 0),
       paidOtherWays: list.reduce((sum, payment) => sum + payment.other, 0),
-      categories: rank(categories),
-      places: rank(places).slice(0, 8),
+      categories,
+      places,
     };
   });
 };

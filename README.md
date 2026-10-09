@@ -18,7 +18,7 @@ A private, installable money planner for PC and smartphone, organized around pay
 - **Cards tab.** Type each card's "used so far" total from its app now and then. Runway adds your usual pace for the rest of the month and shows next cycle's free money on Home. Early in a month, last month's closed total is shown too, since that is what the next payday pays. The tab also charts purchases per card by month and lists split installments.
 - **Balance check.** Enter your real balance; any difference is recorded as a "Balance adjustment" so the plan matches the bank again.
 - **Cycle history.** Where each cycle's money went: transfer bills, cards, cash, savings and what was left.
-- **PayPay import.** On the Cards tab, import a month of transaction history exported from the PayPay app (CSV, English or Japanese). It shows the card's spending by category and top places, and can fill in that card's month total. Only the part charged to the chosen card counts; PayPay Points and Balance are shown separately. Imports never become expenses: the card bill stays one payment in the plan.
+- **Imports.** On the Cards tab, import a month of PayPay app history (CSV, English or Japanese) or a statement CSV from the Vpass website (Amazon Mastercard, Olive; Shift_JIS is read automatically). Both show the card's spending by category and top places. A PayPay import counts only the part charged to the card and can fill in its month total; a Vpass statement can set the bill itself. On リボ払い (revolving payment) the statement shows how much of the purchases isn't in this bill and carries over with interest. Imports never become expenses: the card bill stays one payment in the plan.
 
 ## First-time setup
 

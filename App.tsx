@@ -15,7 +15,7 @@ import {
   subscribeToSyncState, syncPendingChanges,
 } from './services/storageService';
 import {
-  CardBillInput, SETTINGS_RECORD_ID, buildCardBill, isPlannerConfigured, markCardBillPaid, toPlannerData, unmarkCardBillPaid,
+  CardBillInput, SETTINGS_RECORD_ID, buildCardBill, installmentDueOnBill, isPlannerConfigured, markCardBillPaid, toPlannerData, unmarkCardBillPaid,
 } from './services/planner';
 import {
   Obligation, billPaymentId, buildCyclePlan, cardDueDate, cardUsageId, cycleForDate, cycleRecordId, getCycle, monthlyInterest, statementId,
@@ -38,6 +38,7 @@ import { DebtForm } from './components/DebtForm';
 import { GoalForm } from './components/GoalForm';
 import { SettingsPanel } from './components/SettingsPanel';
 import { BalanceCheck } from './components/BalanceCheck';
+import type { ImportedBill } from './components/CardBreakdowns';
 import { Modal } from './components/ui/Modal';
 import { AmountInput } from './components/ui/AmountInput';
 import { CreditCardIcon } from './components/ui/CreditCardIcon';
@@ -323,9 +324,14 @@ const App: React.FC = () => {
   };
 
   /** Imported history explains card bills; its charged total can stand in for the card's month total. */
-  const handleImportBreakdowns = async (breakdowns: CardBreakdown[], usages: CardUsage[]) => {
+  const handleImportBreakdowns = async (breakdowns: CardBreakdown[], usages: CardUsage[], bills: ImportedBill[]) => {
     for (const breakdown of breakdowns) await putPlanner('card_breakdown', breakdown.id, breakdown);
     for (const usage of usages) await putPlanner('card_usage', usage.id, usage);
+    // A statement's bill is saved as if entered at check-in.
+    for (const bill of bills) {
+      const installment = installmentDueOnBill(bill.card, bill.usageMonth, debtsRef.current, toPlannerData(recordsRef.current).statements);
+      await saveCardBill({ card: bill.card, usageMonth: bill.usageMonth, amount: bill.amount, installment, split: null });
+    }
   };
 
   /** Records the gap between the real balance and the plan, so the numbers match the bank again. */

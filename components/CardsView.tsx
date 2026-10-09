@@ -8,7 +8,7 @@ import {
 import { LocalDate, formatShortDate, fromDate, monthKeyOf, shiftMonthKey } from '../utils/jpCalendar';
 import { formatMonthName, formatYen, parseAmount } from '../utils/format';
 import { AmountInput } from './ui/AmountInput';
-import { CardBreakdowns } from './CardBreakdowns';
+import { CardBreakdowns, ImportedBill } from './CardBreakdowns';
 
 interface CardsViewProps {
   data: PlannerData;
@@ -16,7 +16,7 @@ interface CardsViewProps {
   today: LocalDate;
   latestSalary: number | null;
   onSaveUsage: (card: Card, usageMonth: string, amount: number) => Promise<void>;
-  onImportBreakdowns: (breakdowns: CardBreakdown[], usages: CardUsage[]) => Promise<void>;
+  onImportBreakdowns: (breakdowns: CardBreakdown[], usages: CardUsage[], bills: ImportedBill[]) => Promise<void>;
   onDeleteBreakdown: (id: string) => Promise<void>;
   onOpenSetup: () => void;
   onOpenDebts: () => void;
@@ -168,6 +168,10 @@ export const CardsView: React.FC<CardsViewProps> = ({
     const months = Array.from({ length: 12 }, (_, index) => shiftMonthKey(month, index - 12));
     const rows = months.map((usageMonth) => {
       const perCard = cards.map((card) => {
+        // On revolving payment the bill is less than what was bought; an
+        // imported statement knows the real purchases.
+        const imported = data.cardBreakdowns.find((item) => item.cardId === card.id && item.usageMonth === usageMonth && item.source === 'vpass');
+        if (imported) return imported.charged;
         const statement = data.statements.find((item) => item.cardId === card.id && item.usageMonth === usageMonth);
         return statement ? purchasesOn(statement) : 0;
       });
@@ -177,7 +181,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
     });
     const firstWithData = rows.findIndex((row) => row.total > 0);
     return firstWithData === -1 ? [] : rows.slice(firstWithData);
-  }, [cards, data.statements, month]);
+  }, [cards, data.statements, data.cardBreakdowns, month]);
 
   const totals = history.map((row) => row.total);
   const last = history.at(-1) ?? null;
@@ -238,7 +242,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
 
         <section className="card p-5">
           <h2 className="text-sm font-medium text-ink">Purchases by month</h2>
-          <p className="mt-0.5 text-xs text-ink-3">From each bill, not counting split installments.</p>
+          <p className="mt-0.5 text-xs text-ink-3">From each bill, or an imported statement, not counting split installments.</p>
 
           {history.length === 0 ? (
             <p className="mt-4 text-[13px] leading-relaxed text-ink-2">The card bills you enter at check-in build this chart.</p>

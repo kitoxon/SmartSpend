@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  NotPaypayHistoryError, categorizeMerchant, creditMethodsIn, merchantBrand, parseCsv, parsePaypayHistory, summarizePaypayHistory,
-} from './paypayImport';
+import { NotPaypayHistoryError, creditMethodsIn, parseCsv, parsePaypayHistory, summarizePaypayHistory } from './paypayImport';
+import { categorizeMerchant, merchantBrand } from './merchants';
 
 const HEADER = 'Date & Time,Amount Outgoing (Yen),Amount Incoming (Yen),Amount Outgoing Overseas,Currency,Exchange Rate (Yen),Country Paid In,Transaction Type,Business Name,Method,Payment Option,User,Transaction ID';
 
