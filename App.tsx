@@ -43,11 +43,35 @@ import { Modal } from './components/ui/Modal';
 import { AmountInput } from './components/ui/AmountInput';
 import { CreditCardIcon } from './components/ui/CreditCardIcon';
 
-const ExpenseList = React.lazy(() => import('./components/ExpenseList').then((m) => ({ default: m.ExpenseList })));
-const DebtList = React.lazy(() => import('./components/DebtList').then((m) => ({ default: m.DebtList })));
-const GoalList = React.lazy(() => import('./components/GoalList').then((m) => ({ default: m.GoalList })));
-const CardsView = React.lazy(() => import('./components/CardsView').then((m) => ({ default: m.CardsView })));
-const CycleHistory = React.lazy(() => import('./components/CycleHistory').then((m) => ({ default: m.CycleHistory })));
+const RELOADED_FOR_UPDATE_KEY = 'runway_reloaded_for_update';
+
+/**
+ * Loads a screen's file on first visit. A page opened before a deploy may ask
+ * for a file the new version replaced; reloading once gets the new version.
+ */
+const loadScreen = <T,>(load: () => Promise<T>) => load().then(
+  (module) => {
+    try { sessionStorage.removeItem(RELOADED_FOR_UPDATE_KEY); } catch { /* storage unavailable */ }
+    return module;
+  },
+  (error: unknown) => {
+    // Without storage there's no way to tell a second failure, so don't risk a reload loop.
+    let reloaded = true;
+    try {
+      reloaded = sessionStorage.getItem(RELOADED_FOR_UPDATE_KEY) !== null;
+      if (!reloaded) sessionStorage.setItem(RELOADED_FOR_UPDATE_KEY, '1');
+    } catch { /* storage unavailable */ }
+    if (reloaded) throw error;
+    window.location.reload();
+    return new Promise<T>(() => undefined);
+  },
+);
+
+const ExpenseList = React.lazy(() => loadScreen(() => import('./components/ExpenseList')).then((m) => ({ default: m.ExpenseList })));
+const DebtList = React.lazy(() => loadScreen(() => import('./components/DebtList')).then((m) => ({ default: m.DebtList })));
+const GoalList = React.lazy(() => loadScreen(() => import('./components/GoalList')).then((m) => ({ default: m.GoalList })));
+const CardsView = React.lazy(() => loadScreen(() => import('./components/CardsView')).then((m) => ({ default: m.CardsView })));
+const CycleHistory = React.lazy(() => loadScreen(() => import('./components/CycleHistory')).then((m) => ({ default: m.CycleHistory })));
 
 type TransactionPrefill = Partial<Pick<Transaction, 'type' | 'amount' | 'description' | 'category' | 'date'>>;
 type PendingDelete = { type: 'transaction' | 'debt' | 'goal' | 'recurring'; id: string };

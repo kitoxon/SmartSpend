@@ -22,14 +22,14 @@ if ('serviceWorker' in navigator) {
     });
   } else {
     // Production service workers cache Vite's stable development URLs and can
-    // otherwise serve stale JS/CSS. Remove only SmartSpend's development state.
+    // otherwise serve stale JS/CSS. Remove only this app's development state.
     window.addEventListener('load', () => {
       void navigator.serviceWorker.getRegistrations().then((registrations) =>
         Promise.all(registrations.map((registration) => registration.unregister()))
       );
       if ('caches' in window) {
         void caches.keys().then((keys) => Promise.all(
-          keys.filter((key) => key.startsWith('smartspend-')).map((key) => caches.delete(key))
+          keys.filter((key) => key.startsWith('runway-') || key.startsWith('smartspend-')).map((key) => caches.delete(key))
         ));
       }
     });
