@@ -121,7 +121,10 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
   const renderBreakdown = (breakdown: CardBreakdown) => {
     const statement = data.statements.find((item) => item.cardId === breakdown.cardId && item.usageMonth === breakdown.usageMonth);
     const billPurchases = statement ? statement.amount - statement.installment : null;
-    const largest = Math.max(...breakdown.categories.map((category) => category.amount), 1);
+    // What the bill has beyond the PayPay app payments (ETC tolls, using the
+    // card directly), or the reverse when late payments move to next month.
+    const notInHistory = billPurchases !== null ? billPurchases - breakdown.charged : 0;
+    const largest = Math.max(...breakdown.categories.map((category) => category.amount), notInHistory, 1);
     const top = breakdown.categories[0];
     const mostFrequent = [...breakdown.categories].sort((a, b) => b.count - a.count)[0];
     return (
@@ -158,7 +161,24 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
               </div>
             </li>
           ))}
+          {notInHistory >= 1 && (
+            <li>
+              <div className="flex items-baseline justify-between gap-3 text-[13px]">
+                <span className="text-ink-2">Not in PayPay history</span>
+                <span className="tabular-nums text-ink-2">{formatYen(notInHistory)}</span>
+              </div>
+              <div className="mt-1 h-2" aria-hidden="true">
+                <div className="h-full rounded-r-[4px] bg-line-strong" style={{ width: `${Math.max(1, (notInHistory / largest) * 100)}%` }} />
+              </div>
+              <p className="mt-1 text-xs text-ink-3">Such as ETC tolls or using the card directly. Together with the above, this makes the {formatYen(billPurchases ?? 0)} bill.</p>
+            </li>
+          )}
         </ul>
+        {notInHistory <= -1 && (
+          <p className="mt-2 text-xs leading-relaxed text-ink-3">
+            These payments come to {formatYen(notInHistory)} more than the bill. Payments from the last days of the month are often billed the month after.
+          </p>
+        )}
 
         {breakdown.places.length > 0 && (
           <div className="mt-4">
@@ -176,7 +196,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
 
         <p className="mt-3 text-xs leading-relaxed text-ink-3">
           {breakdown.paidOtherWays > 0 && `${formatYen(breakdown.paidOtherWays)} paid with PayPay Points or Balance isn't on the card. `}
-          Purchases made with the card outside the PayPay app aren't included.
+          {billPurchases === null && "Purchases made with the card outside the PayPay app aren't included."}
         </p>
       </div>
     );
