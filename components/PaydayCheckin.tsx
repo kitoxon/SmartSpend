@@ -122,8 +122,8 @@ export const PaydayCheckin: React.FC<PaydayCheckinProps> = ({ mode, plan, data, 
   };
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col">
-      <div className="space-y-5">
+    <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
         {fromToday ? (
           <Section title={`Balance on ${formatShortDate(startDate)}`} note={`Money in your account and wallet on ${formatWeekdayDate(startDate)}. Bills and spending before then are left out of this cycle.`}>
             <AmountInput value={carryover} onChange={setCarryover} size="lg" placeholder="0" aria-label="Starting balance" autoFocus />
@@ -215,7 +215,7 @@ export const PaydayCheckin: React.FC<PaydayCheckinProps> = ({ mode, plan, data, 
         </Section>
       </div>
 
-      <div className="sticky bottom-0 -mx-5 -mb-4 mt-5 border-t border-line bg-card px-5 py-3 pb-safe">
+      <div className="shrink-0 border-t border-line bg-card px-5 pt-3 pb-safe-3">
         <div className="mb-3 flex items-baseline justify-between gap-3">
           <span className="text-sm text-ink-2">Free this cycle</span>
           <span className={`text-xl font-medium tabular-nums ${free < 0 ? 'text-bad' : 'text-good'}`}>{formatSignedYen(free)}</span>

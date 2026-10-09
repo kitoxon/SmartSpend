@@ -9,9 +9,15 @@ interface ModalProps {
   size?: 'md' | 'lg';
   /** Long forms opt out of closing on a backdrop tap, so typed values aren't lost. */
   closeOnBackdrop?: boolean;
+  /**
+   * The content does its own scrolling and padding. Needed for a footer that
+   * stays below the scroll area: a sticky footer inside it would stop short of
+   * the edge by the scroll area's padding.
+   */
+  bare?: boolean;
 }
 
-export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 'md', closeOnBackdrop = true }) => {
+export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 'md', closeOnBackdrop = true, bare = false }) => {
   const titleId = useId();
   useEffect(() => {
     if (!isOpen) return;
@@ -47,7 +53,7 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
             <X size={18} />
           </button>
         </div>
-        <div className="overflow-y-auto px-5 py-4">{children}</div>
+        {bare ? <div className="flex min-h-0 flex-1 flex-col">{children}</div> : <div className="overflow-y-auto px-5 py-4">{children}</div>}
       </div>
     </div>
   );
