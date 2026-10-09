@@ -30,7 +30,7 @@ const CATEGORY_RULES: [string, RegExp][] = [
   ['Utilities', /ガス|電気|電力|でんき|水道|gas\b/i],
   ['Phone and internet', /モバイル|ブロードバンド|ドコモ|docomo|\bau\b|ワイモバイル|ahamo|povo|wimax|光回線|プロバイダ|ocn|nuro/i],
   ['Subscriptions', /プライム会費|amazon ?prime|prime ?video|netflix|spotify|apple\.com|itunes|google|youtube|disney|hulu|u-next|dazn|adobe|icloud/i],
-  ['Sports and hobbies', /空手|道場|武道|ジム|フィットネス|スポーツ|ゴルフ|ボウリング|プール|ヨガ|gym|sports/i],
+  ['Hobbies', /空手|道場|武道|ジム|フィットネス|スポーツ|ゴルフ|ボウリング|プール|ヨガ|gym|sports/i],
   ['Entertainment', /ソフトバンクホークス|\bhub\b|カラオケ|映画|シネマ|cinema|ゲーム|ライブ|チケット/i],
   ['Shopping', /ダイソー|セリア|ユニクロ|\bgu\b|無印|ニトリ|amazon|楽天市場|ビックカメラ|ヨドバシ|ロフト|ハンズ/i],
   ['Vending machines', /ベンディング|自販機|vending/i],

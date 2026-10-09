@@ -22,7 +22,7 @@ import {
   suggestedCarryover,
 } from './utils/payCycle';
 import { monthsBetween, shiftMonthKey, todayLocalDate } from './utils/jpCalendar';
-import { BALANCE_ADJUSTMENT_NOTE } from './utils/transactions';
+import { BALANCE_ADJUSTMENT_NOTE, withCurrentCategory } from './utils/transactions';
 import { addMonthsClamped } from './utils/date';
 import { formatYen } from './utils/format';
 import { APP_NAME } from './constants';
@@ -143,7 +143,7 @@ const App: React.FC = () => {
         if (!isPlannerConfigured(toPlannerData(records))) await processRecurringTransactions();
         const [txs, dbs, gls, rules] = await Promise.all([getTransactions(), getDebts(), getGoals(), getRecurringTransactions()]);
         replaceRecords(records);
-        setTransactions(txs);
+        setTransactions(txs.map(withCurrentCategory));
         replaceDebts(dbs);
         setGoals(gls);
         setRecurringRules(rules);

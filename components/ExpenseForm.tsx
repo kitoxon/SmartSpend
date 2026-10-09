@@ -18,6 +18,10 @@ interface TransactionFormProps {
 
 const defaultCategory = (type: TransactionType) => (type === 'income' ? Category.Freelance : Category.Food);
 
+// Salary (and the overtime paid with it) is entered at the payday check-in, so
+// offering it here would leave money out of the plan or count it twice.
+const ADDABLE_INCOME_CATEGORIES = INCOME_CATEGORIES.filter((category) => category !== Category.Salary && category !== Category.Overtime);
+
 export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, transaction, prefill, existingTransactions = [], onDelete }) => {
   const initialType = transaction?.type ?? prefill?.type ?? 'expense';
   const [type, setType] = useState<TransactionType>(initialType);
@@ -38,7 +42,7 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
     setDate(fromDate(new Date(transaction.date)));
   }, [transaction]);
 
-  const categories = type === 'expense' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES;
+  const categories = type === 'expense' ? EXPENSE_CATEGORIES : transaction ? INCOME_CATEGORIES : ADDABLE_INCOME_CATEGORIES;
   const orderedCategories = useMemo(() => {
     const counts = new Map<Category, number>();
     for (const existing of existingTransactions) {
@@ -90,13 +94,16 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid grid-cols-2 gap-1 rounded-lg bg-subtle p-1">
-        {(['expense', 'income'] as TransactionType[]).map((option) => (
-          <button key={option} type="button" onClick={() => changeType(option)} aria-pressed={type === option} className={`rounded-md py-2 text-sm transition ${type === option ? 'bg-card text-ink' : 'text-ink-2'}`}>
-            {option === 'expense' ? 'Spending' : 'Income'}
-          </button>
-        ))}
-      </div>
+      {/* Only an existing entry can switch type, to fix one logged the wrong way. */}
+      {transaction && (
+        <div className="grid grid-cols-2 gap-1 rounded-lg bg-subtle p-1">
+          {(['expense', 'income'] as TransactionType[]).map((option) => (
+            <button key={option} type="button" onClick={() => changeType(option)} aria-pressed={type === option} className={`rounded-md py-2 text-sm transition ${type === option ? 'bg-card text-ink' : 'text-ink-2'}`}>
+              {option === 'expense' ? 'Spending' : 'Income'}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div>
         <label htmlFor="tx-amount" className="field-label">Amount</label>
@@ -105,7 +112,7 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
 
       <div>
         <label htmlFor="tx-note" className="field-label">Note <span className="text-ink-3">· optional</span></label>
-        <input id="tx-note" type="text" value={description} onChange={(event) => { setDescription(event.target.value); setDuplicateSignature(null); }} placeholder={type === 'expense' ? 'Lunch at work' : 'Bonus'} className="field" maxLength={80} />
+        <input id="tx-note" type="text" value={description} onChange={(event) => { setDescription(event.target.value); setDuplicateSignature(null); }} placeholder={type === 'expense' ? 'Lunch at work' : 'Refund from a shop'} className="field" maxLength={80} />
       </div>
 
       <div>
@@ -122,6 +129,7 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
             </button>
           )}
         </div>
+        {type === 'income' && !transaction && <p className="mt-2 text-xs text-ink-3">Salary is entered at the payday check-in, not here.</p>}
       </div>
 
       <div>

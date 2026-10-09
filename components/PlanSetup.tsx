@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { Landmark, Plus, Trash2 } from 'lucide-react';
-import { Bill, BusinessDayShift, Card, PlannerData, PlannerSettings } from '../types';
+import { Bill, Card, PlannerData, PlannerSettings } from '../types';
 import { getPayday } from '../utils/payCycle';
 import { formatWeekdayDate, monthKeyOf, shiftMonthKey, todayLocalDate } from '../utils/jpCalendar';
 import { parseAmount } from '../utils/format';
 import { isPlannerConfigured, suggestedSetup } from '../services/planner';
-import { AmountInput } from './ui/AmountInput';
+import { BillDraft, BillEditor } from './BillEditor';
 import { CreditCardIcon } from './ui/CreditCardIcon';
 
 export interface PlanSetupResult {
@@ -21,18 +21,7 @@ interface PlanSetupProps {
   onCancel: () => void;
 }
 
-type BillDraft = Omit<Bill, 'amount'> & { amount: string };
-
 const DAYS = Array.from({ length: 31 }, (_, index) => index + 1);
-const MONTHS = Array.from({ length: 12 }, (_, index) => ({
-  value: index + 1,
-  label: new Date(2026, index, 1).toLocaleDateString(undefined, { month: 'long' }),
-}));
-const SHIFT_LABELS: Record<BusinessDayShift, string> = {
-  none: 'Keep the date',
-  next: 'Move later',
-  previous: 'Move earlier',
-};
 
 export const PlanSetup: React.FC<PlanSetupProps> = ({ data, legacyRecurringCount, onSave, onCancel }) => {
   const firstRun = !isPlannerConfigured(data);
@@ -42,6 +31,9 @@ export const PlanSetup: React.FC<PlanSetupProps> = ({ data, legacyRecurringCount
   const [bills, setBills] = useState<BillDraft[]>(initial.bills.filter((bill) => bill.active).map((bill) => ({ ...bill, amount: bill.amount > 0 ? String(bill.amount) : '' })));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // One bill is open for editing at a time; new or unfinished bills open themselves.
+  const [expandedBillId, setExpandedBillId] = useState<string | null>(() => bills.find((bill) => !bill.variable && !parseAmount(bill.amount))?.id ?? null);
+  const [problems, setProblems] = useState<Record<string, string>>({});
 
   const updateCard = (id: string, patch: Partial<Card>) => setCards((list) => list.map((card) => (card.id === id ? { ...card, ...patch } : card)));
   const updateBill = (id: string, patch: Partial<BillDraft>) => setBills((list) => list.map((bill) => (bill.id === id ? { ...bill, ...patch } : bill)));
@@ -55,13 +47,21 @@ export const PlanSetup: React.FC<PlanSetupProps> = ({ data, legacyRecurringCount
 
   const handleSave = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (cards.some((card) => !card.name.trim()) || bills.some((bill) => !bill.name.trim())) {
-      setError('Give every card and bill a name.');
+    if (cards.some((card) => !card.name.trim())) {
+      setError('Give every card a name.');
       return;
     }
-    const missing = bills.find((bill) => !bill.variable && !parseAmount(bill.amount));
-    if (missing) {
-      setError(`Enter the amount for ${missing.name}.`);
+    // Open the first bill that needs attention and say what's missing there.
+    const found: Record<string, string> = {};
+    for (const bill of bills) {
+      if (!bill.name.trim()) found[bill.id] = 'Give this bill a name.';
+      else if (!bill.variable && !parseAmount(bill.amount)) found[bill.id] = `Enter the amount for ${bill.name.trim()}.`;
+    }
+    const firstProblem = bills.find((bill) => found[bill.id]);
+    setProblems(found);
+    if (firstProblem) {
+      setExpandedBillId(firstProblem.id);
+      setError(found[firstProblem.id]);
       return;
     }
     setError(null);
@@ -130,64 +130,26 @@ export const PlanSetup: React.FC<PlanSetupProps> = ({ data, legacyRecurringCount
       <section className="space-y-2">
         <div>
           <h4 className="flex items-center gap-1.5 text-sm font-medium text-ink"><Landmark size={15} /> Transfer bills</h4>
-          <p className="mt-0.5 text-xs leading-relaxed text-ink-3">Paid by bank transfer, not by card. A yearly bill, like an annual fee, is counted in the cycle it falls in. For bills that vary, enter a typical amount and confirm it when it comes.</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-ink-3">Paid by bank transfer, not by card. Tap a bill to change it.</p>
         </div>
         {bills.map((bill) => (
-          <div key={bill.id} className="space-y-2 rounded-xl border border-line p-3">
-            <div className="grid grid-cols-[minmax(0,1fr)_120px_40px] items-center gap-2">
-              <input value={bill.name} onChange={(event) => updateBill(bill.id, { name: event.target.value })} placeholder="Bill name" aria-label="Bill name" className="field" />
-              <AmountInput value={bill.amount} onChange={(amount) => updateBill(bill.id, { amount })} placeholder={bill.variable ? 'Typical' : 'Amount'} aria-label={`${bill.name || 'Bill'} amount`} />
-              <button type="button" onClick={() => setBills((list) => list.filter((item) => item.id !== bill.id))} aria-label={`Remove ${bill.name}`} className="flex h-10 w-10 items-center justify-center rounded-lg text-ink-3 hover:bg-subtle hover:text-bad">
-                <Trash2 size={16} />
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block">
-                <span className="mb-1 block text-xs text-ink-3">Repeats</span>
-                <select
-                  value={bill.frequency ?? 'monthly'}
-                  onChange={(event) => updateBill(bill.id, event.target.value === 'yearly'
-                    ? { frequency: 'yearly', month: bill.month ?? new Date().getMonth() + 1 }
-                    : { frequency: 'monthly', month: undefined })}
-                  className="field px-2 text-sm"
-                >
-                  <option value="monthly">Every month</option>
-                  <option value="yearly">Every year</option>
-                </select>
-              </label>
-              {bill.frequency === 'yearly' && (
-                <label className="block">
-                  <span className="mb-1 block text-xs text-ink-3">Month</span>
-                  <select value={bill.month ?? 1} onChange={(event) => updateBill(bill.id, { month: Number(event.target.value) })} className="field px-2 text-sm">
-                    {MONTHS.map((month) => <option key={month.value} value={month.value}>{month.label}</option>)}
-                  </select>
-                </label>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block">
-                <span className="mb-1 block text-xs text-ink-3">Due</span>
-                <select value={String(bill.dueDay)} onChange={(event) => updateBill(bill.id, { dueDay: event.target.value === 'last' ? 'last' : Number(event.target.value) })} className="field px-2 text-sm">
-                  {DAYS.map((day) => <option key={day} value={day}>Day {day}</option>)}
-                  <option value="last">End of month</option>
-                </select>
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-xs text-ink-3">If weekend or holiday</span>
-                <select value={bill.shift} onChange={(event) => updateBill(bill.id, { shift: event.target.value as BusinessDayShift })} className="field px-2 text-sm">
-                  {(Object.keys(SHIFT_LABELS) as BusinessDayShift[]).map((shift) => <option key={shift} value={shift}>{SHIFT_LABELS[shift]}</option>)}
-                </select>
-              </label>
-            </div>
-            <label className="flex cursor-pointer items-center gap-2 text-[13px] text-ink-2">
-              <input type="checkbox" checked={bill.variable} onChange={(event) => updateBill(bill.id, { variable: event.target.checked })} className="h-4 w-4 accent-[rgb(var(--accent))]" />
-              Amount varies each {bill.frequency === 'yearly' ? 'year' : 'month'}
-            </label>
-          </div>
+          <BillEditor
+            key={bill.id}
+            bill={bill}
+            expanded={expandedBillId === bill.id}
+            problem={problems[bill.id] ?? null}
+            onToggle={() => setExpandedBillId((current) => (current === bill.id ? null : bill.id))}
+            onChange={(patch) => { updateBill(bill.id, patch); setProblems((current) => ({ ...current, [bill.id]: '' })); }}
+            onRemove={() => setBills((list) => list.filter((item) => item.id !== bill.id))}
+          />
         ))}
         <button
           type="button"
-          onClick={() => setBills((list) => [...list, { id: crypto.randomUUID(), name: '', amount: '', dueDay: 27, shift: 'none', variable: false, active: true, sortOrder: list.length }])}
+          onClick={() => {
+            const id = crypto.randomUUID();
+            setBills((list) => [...list, { id, name: '', amount: '', dueDay: 27, shift: 'none', variable: false, active: true, sortOrder: list.length }]);
+            setExpandedBillId(id);
+          }}
           className="btn-ghost"
         >
           <Plus size={15} /> Add bill

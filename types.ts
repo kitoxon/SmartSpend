@@ -6,7 +6,7 @@ export enum Category {
   Housing = 'Housing',
   Utilities = 'Utilities',
   Entertainment = 'Entertainment',
-  Sports = 'Sports and hobbies',
+  Hobbies = 'Hobbies',
   Health = 'Health',
   Shopping = 'Shopping',
   Groceries = 'Groceries',

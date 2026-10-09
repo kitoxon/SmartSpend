@@ -5,6 +5,7 @@ import { cardBreakdownId, cardDueDate, cardUsageId, statementPurchases } from '.
 import { LocalDate, dayOfMonth, formatShortDate, formatWeekdayDate, fromDate, monthKeyOf } from '../utils/jpCalendar';
 import { formatMonthName, formatYen } from '../utils/format';
 import { MerchantGroup } from '../utils/merchants';
+import { currentCategoryName } from '../utils/transactions';
 import {
   NotPaypayHistoryError, PaypayPayment, creditMethodsIn, parsePaypayHistory, summarizePaypayHistory,
 } from '../utils/paypayImport';
@@ -204,8 +205,9 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
     // On revolving payment, purchases not in this bill carry over with interest.
     const carriedOver = isStatement && breakdown.billed !== undefined ? breakdown.charged - breakdown.billed : 0;
     const largest = Math.max(...breakdown.categories.map((category) => category.amount), notInHistory, 1);
-    const top = breakdown.categories[0];
-    const mostFrequent = [...breakdown.categories].sort((a, b) => b.count - a.count)[0];
+    const categories = breakdown.categories.map((category) => ({ ...category, label: currentCategoryName(category.label) }));
+    const top = categories[0];
+    const mostFrequent = [...categories].sort((a, b) => b.count - a.count)[0];
     return (
       <div className="mt-3">
         <div className="flex items-start justify-between gap-3">
@@ -245,7 +247,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
         )}
 
         <ul className="mt-3 space-y-2.5">
-          {breakdown.categories.map((category) => (
+          {categories.map((category) => (
             <li key={category.label}>
               <div className="flex items-baseline justify-between gap-3 text-[13px]">
                 <span className="text-ink">{category.label}</span>
