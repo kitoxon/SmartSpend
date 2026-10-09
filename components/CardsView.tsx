@@ -5,7 +5,7 @@ import {
   averageCardUsage, cardDueDate, cycleForDate, getCycle, monthlyInterest, projectCardUsage, scheduledPrincipal, unusuallyHighBy, usageMonthsDueIn,
   usualPaceBy,
 } from '../utils/payCycle';
-import { LocalDate, formatShortDate, fromDate, monthKeyOf, shiftMonthKey } from '../utils/jpCalendar';
+import { LocalDate, dayOfMonth, formatShortDate, fromDate, monthKeyOf, shiftMonthKey } from '../utils/jpCalendar';
 import { formatMonthName, formatYen, parseAmount } from '../utils/format';
 import { AmountInput } from './ui/AmountInput';
 import { CardBreakdowns, ImportedBill } from './CardBreakdowns';
@@ -27,6 +27,23 @@ const SERIES_BG = ['bg-series-1', 'bg-series-2', 'bg-series-3', 'bg-series-4', '
 const seriesClass = (index: number) => SERIES_BG[index] ?? 'bg-ink-3';
 
 const purchasesOn = (statement: CardStatement) => statement.amount - statement.installment;
+
+/**
+ * Purchases on a card in a finished month, from the most complete source:
+ * an imported statement, the entered bill, a total typed after the month
+ * ended, then a PayPay history (app payments only).
+ */
+const monthPurchases = (card: Card, usageMonth: string, data: PlannerData) => {
+  const forCard = <T extends { cardId: string; usageMonth: string }>(items: T[]) =>
+    items.filter((item) => item.cardId === card.id && item.usageMonth === usageMonth);
+  const statementImport = forCard(data.cardBreakdowns).find((item) => item.source === 'vpass');
+  if (statementImport) return statementImport.charged;
+  const statement = forCard(data.statements)[0];
+  if (statement) return purchasesOn(statement);
+  const typed = forCard(data.cardUsage)[0];
+  if (typed && typed.asOf > dayOfMonth(usageMonth, 'last')) return typed.amount;
+  return forCard(data.cardBreakdowns).find((item) => item.source === 'paypay')?.charged ?? 0;
+};
 
 const compactYen = (amount: number) => {
   if (amount >= 1_000_000) return `¥${(amount / 1_000_000).toFixed(amount % 1_000_000 === 0 ? 0 : 1)}M`;
@@ -167,21 +184,14 @@ export const CardsView: React.FC<CardsViewProps> = ({
   const history = useMemo(() => {
     const months = Array.from({ length: 12 }, (_, index) => shiftMonthKey(month, index - 12));
     const rows = months.map((usageMonth) => {
-      const perCard = cards.map((card) => {
-        // On revolving payment the bill is less than what was bought; an
-        // imported statement knows the real purchases.
-        const imported = data.cardBreakdowns.find((item) => item.cardId === card.id && item.usageMonth === usageMonth && item.source === 'vpass');
-        if (imported) return imported.charged;
-        const statement = data.statements.find((item) => item.cardId === card.id && item.usageMonth === usageMonth);
-        return statement ? purchasesOn(statement) : 0;
-      });
+      const perCard = cards.map((card) => monthPurchases(card, usageMonth, data));
       // Only the top segment of a stack gets the rounded data-end.
       const topIndex = perCard.reduce((top, amount, index) => (amount > 0 ? index : top), -1);
       return { usageMonth, perCard, topIndex, total: perCard.reduce((sum, amount) => sum + amount, 0) };
     });
     const firstWithData = rows.findIndex((row) => row.total > 0);
     return firstWithData === -1 ? [] : rows.slice(firstWithData);
-  }, [cards, data.statements, data.cardBreakdowns, month]);
+  }, [cards, data, month]);
 
   const totals = history.map((row) => row.total);
   const last = history.at(-1) ?? null;
@@ -242,7 +252,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
 
         <section className="card p-5">
           <h2 className="text-sm font-medium text-ink">Purchases by month</h2>
-          <p className="mt-0.5 text-xs text-ink-3">From each bill, or an imported statement, not counting split installments.</p>
+          <p className="mt-0.5 text-xs text-ink-3">From bills, imports and final month totals, not counting split installments.</p>
 
           {history.length === 0 ? (
             <p className="mt-4 text-[13px] leading-relaxed text-ink-2">The card bills you enter at check-in build this chart.</p>
