@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { FileUp, Trash2 } from 'lucide-react';
 import { Card, CardBreakdown, CardUsage, PlannerData } from '../types';
-import { cardBreakdownId, cardDueDate, cardUsageId } from '../utils/payCycle';
+import { cardBreakdownId, cardDueDate, cardUsageId, statementPurchases } from '../utils/payCycle';
 import { LocalDate, dayOfMonth, formatShortDate, formatWeekdayDate, fromDate, monthKeyOf } from '../utils/jpCalendar';
 import { formatMonthName, formatYen } from '../utils/format';
 import { MerchantGroup } from '../utils/merchants';
@@ -22,7 +22,7 @@ interface CardBreakdownsProps {
   seriesClass: (index: number) => string;
   today: LocalDate;
   onImport: (breakdowns: CardBreakdown[], usages: CardUsage[], bills: ImportedBill[]) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
+  onDelete: (breakdown: CardBreakdown) => Promise<void>;
 }
 
 type Preview =
@@ -82,6 +82,11 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Data as it was when the file was chosen. Saving writes the new import
+  // before the preview closes, and the preview must not react to it (for
+  // example by warning that the import replaces itself).
+  const [before, setBefore] = useState<PlannerData | null>(null);
+  const snapshot = before ?? data;
 
   const breakdowns = useMemo(
     () => [...data.cardBreakdowns].sort((a, b) => b.usageMonth.localeCompare(a.usageMonth) || a.cardId.localeCompare(b.cardId)),
@@ -106,7 +111,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
       places: month.places,
     }));
 
-  const statementFor = (id: string, usageMonth: string) => data.statements.find((item) => item.cardId === id && item.usageMonth === usageMonth);
+  const statementIn = (source: PlannerData, id: string, usageMonth: string) => source.statements.find((item) => item.cardId === id && item.usageMonth === usageMonth);
 
   /** Best guess at the card a file belongs to; always shown so it can be changed. */
   const guessCard = (next: Preview) => {
@@ -125,6 +130,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
         setError('No card payments were found in this file.');
         return;
       }
+      setBefore(data);
       setPreview(next);
       setMethod(next.kind === 'paypay' ? next.methods[0] : '');
       setCardId(guessCard(next));
@@ -137,6 +143,18 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
   const confirmImport = async () => {
     if (!preview || !card) return;
     setSaving(true);
+    // A statement's payment amount is the bill itself. A PayPay history only
+    // gives a month total, used unless the bill is entered or a higher total was typed.
+    const bills: ImportedBill[] = preview.kind === 'vpass' && useAsTotal
+      ? months.flatMap((month) => (month.billed !== null && !statementIn(snapshot, card.id, month.usageMonth) ? [{ card, usageMonth: month.usageMonth, amount: month.billed }] : []))
+      : [];
+    const usages: CardUsage[] = preview.kind === 'paypay' && useAsTotal ? months.flatMap((month) => {
+      const typed = snapshot.cardUsage.find((item) => item.cardId === card.id && item.usageMonth === month.usageMonth);
+      if (statementIn(snapshot, card.id, month.usageMonth) || month.charged <= 0 || (typed && typed.amount > month.charged)) return [];
+      const asOf = month.usageMonth < currentMonth ? dayOfMonth(month.usageMonth, 'last') : month.lastDate;
+      return [{ id: cardUsageId(card.id, month.usageMonth), cardId: card.id, usageMonth: month.usageMonth, amount: month.charged, asOf }];
+    }) : [];
+
     const importedAt = new Date().toISOString();
     const newBreakdowns: CardBreakdown[] = months.map((month) => ({
       id: cardBreakdownId(card.id, month.usageMonth),
@@ -151,26 +169,17 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
       paidOtherWays: month.paidOtherWays,
       ...(month.billed !== null ? { billed: month.billed } : {}),
       ...(month.revolving ? { revolving: true } : {}),
+      // Removing the import later also removes a month total it set.
+      ...(usages.some((usage) => usage.usageMonth === month.usageMonth) ? { setMonthTotal: true } : {}),
       categories: month.categories,
       places: month.places,
     }));
-
-    // A statement's payment amount is the bill itself. A PayPay history only
-    // gives a month total, used unless the bill is entered or a higher total was typed.
-    const bills: ImportedBill[] = preview.kind === 'vpass' && useAsTotal
-      ? months.flatMap((month) => (month.billed !== null && !statementFor(card.id, month.usageMonth) ? [{ card, usageMonth: month.usageMonth, amount: month.billed }] : []))
-      : [];
-    const usages: CardUsage[] = preview.kind === 'paypay' && useAsTotal ? months.flatMap((month) => {
-      const typed = data.cardUsage.find((item) => item.cardId === card.id && item.usageMonth === month.usageMonth);
-      if (statementFor(card.id, month.usageMonth) || month.charged <= 0 || (typed && typed.amount > month.charged)) return [];
-      const asOf = month.usageMonth < currentMonth ? dayOfMonth(month.usageMonth, 'last') : month.lastDate;
-      return [{ id: cardUsageId(card.id, month.usageMonth), cardId: card.id, usageMonth: month.usageMonth, amount: month.charged, asOf }];
-    }) : [];
 
     try {
       await onImport(newBreakdowns, usages, bills);
       setSelectedId(newBreakdowns.at(-1)?.id ?? null);
       setPreview(null);
+      setBefore(null);
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : 'Could not import.');
     } finally {
@@ -183,10 +192,10 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
 
   const renderBreakdown = (breakdown: CardBreakdown) => {
     const isStatement = breakdown.source === 'vpass';
-    const statement = statementFor(breakdown.cardId, breakdown.usageMonth);
+    const statement = statementIn(data, breakdown.cardId, breakdown.usageMonth);
     // Without an entered bill, a total typed after the month ended is the bill.
     const finalTotal = data.cardUsage.find((item) => item.cardId === breakdown.cardId && item.usageMonth === breakdown.usageMonth && item.asOf > dayOfMonth(item.usageMonth, 'last'));
-    const billPurchases = statement ? statement.amount - statement.installment : finalTotal?.amount ?? null;
+    const billPurchases = statement ? statementPurchases(statement) : finalTotal?.amount ?? null;
     const billLabel = statement ? 'bill' : 'total you entered';
     // A PayPay history misses what the bill has from outside the app (ETC
     // tolls, using the card directly), or runs over when late payments move
@@ -209,7 +218,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
               {!isStatement && billPurchases ? ` · ${Math.min(100, Math.round((breakdown.charged / billPurchases) * 100))}% of the ${formatYen(billPurchases)} ${billLabel}` : ''}
             </p>
           </div>
-          <button type="button" onClick={() => void onDelete(breakdown.id)} aria-label="Remove this import" className="shrink-0 rounded-lg p-2 text-ink-3 hover:bg-subtle hover:text-bad">
+          <button type="button" onClick={() => void onDelete(breakdown)} aria-label="Remove this import" className="shrink-0 rounded-lg p-2 text-ink-3 hover:bg-subtle hover:text-bad">
             <Trash2 size={15} />
           </button>
         </div>
@@ -334,7 +343,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
           </div>
           {preview.kind === 'vpass' && card ? (
             months.map((month) => {
-              const entered = statementFor(card.id, month.usageMonth);
+              const entered = statementIn(snapshot, card.id, month.usageMonth);
               if (month.billed === null) return null;
               if (entered) {
                 return entered.amount === month.billed ? null : (
@@ -357,7 +366,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
             </label>
           )}
           {card && months.map((month) => {
-            const existing = data.cardBreakdowns.find((item) => item.cardId === card.id && item.usageMonth === month.usageMonth);
+            const existing = snapshot.cardBreakdowns.find((item) => item.cardId === card.id && item.usageMonth === month.usageMonth);
             return existing && (
               <p key={`replace-${month.usageMonth}`} className="rounded-lg bg-warn-soft px-3 py-2 text-xs leading-relaxed text-warn">
                 Replaces the {card.name} {monthLabel(month.usageMonth)} import from {formatShortDate(fromDate(new Date(existing.importedAt)))}. Check the card if that's not what you meant.
@@ -365,7 +374,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
             );
           })}
           <div className="flex gap-2">
-            <button type="button" onClick={() => setPreview(null)} className="btn flex-1">Cancel</button>
+            <button type="button" onClick={() => { setPreview(null); setBefore(null); }} className="btn flex-1">Cancel</button>
             <button type="button" onClick={() => void confirmImport()} disabled={saving || !card} className="btn-primary flex-[2]">{saving ? 'Importing…' : 'Import'}</button>
           </div>
         </div>

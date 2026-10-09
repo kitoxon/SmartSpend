@@ -3,7 +3,7 @@ import {
   ArrowLeftRight, ArrowRight, Check, ChevronLeft, ChevronRight, Droplets, Home, Landmark, Plus, Sparkles, Zap,
 } from 'lucide-react';
 import { Transaction } from '../types';
-import { CyclePlan, Obligation, cycleBreakdown, unusuallyHighBy } from '../utils/payCycle';
+import { CyclePlan, Obligation, cycleBreakdown, statementPurchases, unusuallyHighBy } from '../utils/payCycle';
 import { addDays, diffDays, formatShortDate, formatWeekdayDate, fromDate, monthKeyOf, todayLocalDate } from '../utils/jpCalendar';
 import { formatSignedYen, formatYen } from '../utils/format';
 import { CategoryIcon } from './ui/CategoryIcon';
@@ -58,7 +58,7 @@ const ObligationRow: React.FC<{
     : overdue ? `${-daysUntil}d overdue`
       : daysUntil === 0 ? 'Due today' : daysUntil === 1 ? 'Due tomorrow' : formatWeekdayDate(obligation.dueDate);
   const kindLabel = obligation.kind === 'card' ? 'card bill' : obligation.kind === 'debt' ? 'payment' : 'bill';
-  const highBy = obligation.statement ? unusuallyHighBy(obligation.statement.amount - obligation.statement.installment, obligation.usual) : null;
+  const highBy = obligation.statement ? unusuallyHighBy(statementPurchases(obligation.statement), obligation.usual) : null;
 
   return (
     <div className="flex items-center gap-2 py-1">

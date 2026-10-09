@@ -188,6 +188,12 @@ const App: React.FC = () => {
     if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
   }, []);
 
+  // The date can change while the app stays open, so check once a minute.
+  useEffect(() => {
+    const timer = window.setInterval(() => setToday(todayLocalDate()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   // ---------------------------------------------------------------- Planner
 
   const plannerData = useMemo(() => toPlannerData(plannerRecords), [plannerRecords]);
@@ -337,6 +343,15 @@ const App: React.FC = () => {
       const installment = installmentDueOnBill(bill.card, bill.usageMonth, debtsRef.current, toPlannerData(recordsRef.current).statements);
       await saveCardBill({ card: bill.card, usageMonth: bill.usageMonth, amount: bill.amount, installment, split: null });
     }
+  };
+
+  /** Removing an import also removes a month total it set, unless that total was changed since. */
+  const handleDeleteBreakdown = async (breakdown: CardBreakdown) => {
+    await dropPlanner(breakdown.id);
+    if (!breakdown.setMonthTotal) return;
+    const usageId = cardUsageId(breakdown.cardId, breakdown.usageMonth);
+    const usage = toPlannerData(recordsRef.current).cardUsage.find((item) => item.id === usageId);
+    if (usage && usage.amount === breakdown.charged) await dropPlanner(usageId);
   };
 
   /** Records the gap between the real balance and the plan, so the numbers match the bank again. */
@@ -704,7 +719,7 @@ const App: React.FC = () => {
               latestSalary={latestSalary}
               onSaveUsage={handleSaveUsage}
               onImportBreakdowns={handleImportBreakdowns}
-              onDeleteBreakdown={dropPlanner}
+              onDeleteBreakdown={handleDeleteBreakdown}
               onOpenSetup={() => setIsSetupOpen(true)}
               onOpenDebts={() => setCurrentView('debts')}
             />

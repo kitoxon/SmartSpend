@@ -56,6 +56,13 @@ describe('statement shop names', () => {
     expect(categorizeMerchant('ＡＭＡＺＯＮ．ＣＯ．ＪＰ')).toBe('Shopping');
     expect(categorizeMerchant('ユナイテッド・シネマ  中央／ＮＦＣ')).toBe('Entertainment');
     expect(categorizeMerchant('ゆめマ－ト  中央店（食')).toBe('Groceries');
+    expect(categorizeMerchant('HUB - HUB福岡店')).toBe('Entertainment');
+    expect(categorizeMerchant('GITHUB, INC.')).toBe('Other');
+    expect(categorizeMerchant('PRIME STEAK HOUSE')).toBe('Other');
+    expect(categorizeMerchant('Amazon Prime Video')).toBe('Subscriptions');
+    expect(categorizeMerchant('GO')).toBe('Transport');
+    expect(categorizeMerchant('ＧＯタクシー')).toBe('Transport');
+    expect(categorizeMerchant("LET'S GO MART")).toBe('Other');
     expect(merchantBrand('イオン九州  ＳＳＭ')).toBe('イオン九州');
     expect(merchantBrand('西部ガス利用料金２０２６／０９')).toBe('西部ガス利用料金');
   });

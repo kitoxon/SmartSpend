@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { Bill, Card, Debt, Goal, PlannerData } from '../types';
+import { Bill, Card, Category, Debt, Goal, PlannerData } from '../types';
 import { CyclePlan, averageCardUsage, lastCardBill } from '../utils/payCycle';
-import { formatShortDate, formatWeekdayDate, todayLocalDate } from '../utils/jpCalendar';
+import { formatShortDate, formatWeekdayDate, fromDate, todayLocalDate } from '../utils/jpCalendar';
 import { formatSignedYen, formatYen, parseAmount } from '../utils/format';
 import { CardBillInput, installmentDueOnBill } from '../services/planner';
 import { AmountInput } from './ui/AmountInput';
@@ -80,7 +80,12 @@ export const PaydayCheckin: React.FC<PaydayCheckinProps> = ({ mode, plan, data, 
   }, 0);
   const billTotal = billItems.reduce((sum, item) => sum + (parseAmount(billValues[item.key] ?? '') ?? 0), 0);
   const debtTotal = debtItems.reduce((sum, item) => sum + item.amount, 0);
-  const free = carryoverAmount + salaryAmount - savingsAmount - cardTotal - billTotal - debtTotal;
+  // Income other than salary already logged this cycle counts, as it does on Home.
+  const incomeFrom = fromToday ? startDate : plan.cycle.start;
+  const otherIncome = plan.cashTransactions
+    .filter((transaction) => transaction.type === 'income' && transaction.category !== Category.Salary && fromDate(new Date(transaction.date)) >= incomeFrom)
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+  const free = carryoverAmount + salaryAmount + otherIncome - savingsAmount - cardTotal - billTotal - debtTotal;
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -220,6 +225,7 @@ export const PaydayCheckin: React.FC<PaydayCheckinProps> = ({ mode, plan, data, 
           <span className="text-sm text-ink-2">Free this cycle</span>
           <span className={`text-xl font-medium tabular-nums ${free < 0 ? 'text-bad' : 'text-good'}`}>{formatSignedYen(free)}</span>
         </div>
+        {otherIncome > 0 && <p className="-mt-2 mb-3 text-xs text-ink-3">Includes {formatYen(otherIncome)} of other income logged this cycle.</p>}
         {error && <p className="mb-2 text-xs text-bad">{error}</p>}
         <div className="flex gap-2">
           <button type="button" onClick={onCancel} className="btn flex-1">Cancel</button>

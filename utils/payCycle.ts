@@ -75,6 +75,9 @@ export const installmentDebtsFor = (cardId: string, debts: Debt[], billDueDate: 
 export const scheduledInstallment = (cardId: string, debts: Debt[], billDueDate: LocalDate) => installmentDebtsFor(cardId, debts, billDueDate)
   .reduce((sum, debt) => sum + scheduledPrincipal(debt) + monthlyInterest(debt), 0);
 
+/** New purchases on a bill: what it charges minus installments on earlier splits. */
+export const statementPurchases = (statement: Pick<CardStatement, 'amount' | 'installment'>) => statement.amount - statement.installment;
+
 /** Average new purchases on a card over its last three bills before `usageMonth`. */
 export const averageCardUsage = (cardId: string, statements: CardStatement[], usageMonth: string) => {
   const recent = statements
@@ -82,7 +85,7 @@ export const averageCardUsage = (cardId: string, statements: CardStatement[], us
     .sort((a, b) => b.usageMonth.localeCompare(a.usageMonth))
     .slice(0, 3);
   if (!recent.length) return null;
-  return Math.round(recent.reduce((sum, statement) => sum + statement.amount - statement.installment, 0) / recent.length);
+  return Math.round(recent.reduce((sum, statement) => sum + statementPurchases(statement), 0) / recent.length);
 };
 
 export const cardUsageId = (cardId: string, usageMonth: string) => `usage:${cardId}:${usageMonth}`;

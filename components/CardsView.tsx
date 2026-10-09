@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ArrowRight, Pencil } from 'lucide-react';
 import { Card, CardBreakdown, CardStatement, CardUsage, Debt, PlannerData } from '../types';
 import {
-  averageCardUsage, cardDueDate, cycleForDate, getCycle, monthlyInterest, projectCardUsage, scheduledPrincipal, unusuallyHighBy, usageMonthsDueIn,
+  averageCardUsage, cardDueDate, cycleForDate, getCycle, monthlyInterest, projectCardUsage, scheduledPrincipal, statementPurchases, unusuallyHighBy, usageMonthsDueIn,
   usualPaceBy,
 } from '../utils/payCycle';
 import { LocalDate, dayOfMonth, formatShortDate, fromDate, monthKeyOf, shiftMonthKey } from '../utils/jpCalendar';
@@ -17,7 +17,7 @@ interface CardsViewProps {
   latestSalary: number | null;
   onSaveUsage: (card: Card, usageMonth: string, amount: number) => Promise<void>;
   onImportBreakdowns: (breakdowns: CardBreakdown[], usages: CardUsage[], bills: ImportedBill[]) => Promise<void>;
-  onDeleteBreakdown: (id: string) => Promise<void>;
+  onDeleteBreakdown: (breakdown: CardBreakdown) => Promise<void>;
   onOpenSetup: () => void;
   onOpenDebts: () => void;
 }
@@ -26,7 +26,6 @@ interface CardsViewProps {
 const SERIES_BG = ['bg-series-1', 'bg-series-2', 'bg-series-3', 'bg-series-4', 'bg-series-5'];
 const seriesClass = (index: number) => SERIES_BG[index] ?? 'bg-ink-3';
 
-const purchasesOn = (statement: CardStatement) => statement.amount - statement.installment;
 
 /**
  * Purchases on a card in a finished month, from the most complete source:
@@ -39,7 +38,7 @@ const monthPurchases = (card: Card, usageMonth: string, data: PlannerData) => {
   const statementImport = forCard(data.cardBreakdowns).find((item) => item.source === 'vpass');
   if (statementImport) return statementImport.charged;
   const statement = forCard(data.statements)[0];
-  if (statement) return purchasesOn(statement);
+  if (statement) return statementPurchases(statement);
   const typed = forCard(data.cardUsage)[0];
   if (typed && typed.asOf > dayOfMonth(usageMonth, 'last')) return typed.amount;
   return forCard(data.cardBreakdowns).find((item) => item.source === 'paypay')?.charged ?? 0;
@@ -75,7 +74,7 @@ const Legend: React.FC<{ cards: Card[] }> = ({ cards }) => (
 /** Purchases on a card in a month: its entered bill, else the latest typed total, else its usual amount. */
 const expectedPurchases = (card: Card, month: string, data: PlannerData) => {
   const statement = data.statements.find((item) => item.cardId === card.id && item.usageMonth === month);
-  if (statement) return { known: purchasesOn(statement), expected: purchasesOn(statement) };
+  if (statement) return { known: statementPurchases(statement), expected: statementPurchases(statement) };
   const usage = data.cardUsage.find((item) => item.cardId === card.id && item.usageMonth === month);
   const average = averageCardUsage(card.id, data.statements, month);
   return { known: usage?.amount ?? 0, expected: (usage ? projectCardUsage(usage, average) : average) ?? 0 };
