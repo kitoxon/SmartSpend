@@ -1,8 +1,8 @@
-import React, { useMemo, useRef, useState } from 'react';
-import { FileUp, Trash2 } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { ChevronDown, ChevronLeft, ChevronRight, FileUp, Trash2 } from 'lucide-react';
 import { Card, CardBreakdown, CardUsage, PlannerData } from '../types';
 import { cardBreakdownId, cardDueDate, cardUsageId, statementPurchases } from '../utils/payCycle';
-import { LocalDate, dayOfMonth, formatShortDate, formatWeekdayDate, fromDate, monthKeyOf } from '../utils/jpCalendar';
+import { LocalDate, dayOfMonth, formatShortDate, formatWeekdayDate, fromDate, monthKeyOf, monthsBetween } from '../utils/jpCalendar';
 import { formatMonthName, formatYen } from '../utils/format';
 import { MerchantGroup } from '../utils/merchants';
 import { currentCategoryName } from '../utils/transactions';
@@ -72,6 +72,8 @@ const readImportFile = async (file: File): Promise<Preview> => {
   throw new Error("This file isn't a PayPay history or a Vpass statement CSV.");
 };
 
+const STEP_BUTTON = 'flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-ink-2 transition hover:bg-card hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent';
+
 const monthLabel = (usageMonth: string) => `${formatMonthName(usageMonth)} ${usageMonth.slice(0, 4)}`;
 
 export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, seriesClass, today, onImport, onDelete }) => {
@@ -89,10 +91,10 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
   const [before, setBefore] = useState<PlannerData | null>(null);
   const snapshot = before ?? data;
 
-  const breakdowns = useMemo(
-    () => [...data.cardBreakdowns].sort((a, b) => b.usageMonth.localeCompare(a.usageMonth) || a.cardId.localeCompare(b.cardId)),
-    [data.cardBreakdowns],
-  );
+  const cardIndex = (id: string) => cards.findIndex((item) => item.id === id);
+  const cardOrder = (id: string) => (cardIndex(id) < 0 ? cards.length : cardIndex(id));
+  // Newest first; within a month, in the order the cards are set up.
+  const breakdowns = [...data.cardBreakdowns].sort((a, b) => b.usageMonth.localeCompare(a.usageMonth) || cardOrder(a.cardId) - cardOrder(b.cardId));
   const shown = breakdowns.find((item) => item.id === selectedId) ?? breakdowns[0] ?? null;
   const currentMonth = monthKeyOf(today);
   const card = cards.find((item) => item.id === cardId);
@@ -188,10 +190,34 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
     }
   };
 
-  const cardIndex = (id: string) => cards.findIndex((item) => item.id === id);
   const cardName = (id: string) => data.cards.find((item) => item.id === id)?.name ?? 'Card';
 
-  const renderBreakdown = (breakdown: CardBreakdown) => {
+  // One card at a time, stepping through its months, so the controls stay
+  // the same size however many months are imported.
+  const importedCards = [...new Set(breakdowns.map((item) => item.cardId))].sort((a, b) => cardOrder(a) - cardOrder(b));
+  const monthsOf = (id: string) => breakdowns.filter((item) => item.cardId === id);
+  const shownMonths = shown ? monthsOf(shown.cardId) : [];
+  const shownAt = shown ? shownMonths.indexOf(shown) : -1;
+  const older = shownMonths[shownAt + 1] ?? null;
+  const newer = shownAt > 0 ? shownMonths[shownAt - 1] : null;
+
+  /** The same month on another card, or the closest one it has (the newer on a tie). */
+  const showCard = (id: string) => {
+    const distance = (item: CardBreakdown) => (shown ? Math.abs(monthsBetween(shown.usageMonth, item.usageMonth)) : 0);
+    const closest = monthsOf(id).reduce((best, item) => (distance(item) < distance(best) ? item : best));
+    setSelectedId(closest.id);
+  };
+
+  /** Removes an import and stays on its card: the month before, or after if it was the oldest. */
+  const removeBreakdown = async (breakdown: CardBreakdown) => {
+    const months = monthsOf(breakdown.cardId);
+    const at = months.indexOf(breakdown);
+    const neighbor = months[at + 1] ?? months[at - 1] ?? null;
+    await onDelete(breakdown);
+    setSelectedId(neighbor?.id ?? null);
+  };
+
+  const renderBreakdown = (breakdown: CardBreakdown, titled: boolean) => {
     const isStatement = breakdown.source === 'vpass';
     const statement = statementIn(data, breakdown.cardId, breakdown.usageMonth);
     // Without an entered bill, a total typed after the month ended is the bill.
@@ -212,15 +238,15 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
       <div className="mt-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-sm text-ink">{cardName(breakdown.cardId)} · {monthLabel(breakdown.usageMonth)}</p>
-            <p className="mt-0.5 text-xs leading-relaxed text-ink-3">
+            {titled && <p className="text-sm text-ink">{cardName(breakdown.cardId)} · {monthLabel(breakdown.usageMonth)}</p>}
+            <p className={`${titled ? 'mt-0.5' : 'pt-2'} text-xs leading-relaxed text-ink-3`}>
               {isStatement ? 'Vpass statement' : 'PayPay history'}, {formatShortDate(breakdown.firstDate)}–{formatShortDate(breakdown.lastDate)}:{' '}
               {breakdown.payments} {isStatement ? 'purchases' : 'payments'}, {formatYen(breakdown.charged)}{isStatement ? '' : ' on the card'}
               {isStatement && breakdown.billed !== undefined && ` · bill ${formatYen(breakdown.billed)}`}
               {!isStatement && billPurchases ? ` · ${Math.min(100, Math.round((breakdown.charged / billPurchases) * 100))}% of the ${formatYen(billPurchases)} ${billLabel}` : ''}
             </p>
           </div>
-          <button type="button" onClick={() => void onDelete(breakdown)} aria-label="Remove this import" className="shrink-0 rounded-lg p-2 text-ink-3 hover:bg-subtle hover:text-bad">
+          <button type="button" onClick={() => void removeBreakdown(breakdown)} aria-label="Remove this import" className="shrink-0 rounded-lg p-2 text-ink-3 hover:bg-subtle hover:text-bad">
             <Trash2 size={15} />
           </button>
         </div>
@@ -382,23 +408,43 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
         </div>
       )}
 
-      {breakdowns.length > 1 && (
-        <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1">
-          {breakdowns.map((breakdown) => (
-            <button
-              key={breakdown.id}
-              type="button"
-              onClick={() => setSelectedId(breakdown.id)}
-              aria-pressed={shown?.id === breakdown.id}
-              className={`shrink-0 ${shown?.id === breakdown.id ? 'chip-on' : 'chip'}`}
-            >
-              {cardName(breakdown.cardId)} · {formatMonthName(breakdown.usageMonth).slice(0, 3)}
+      {shown && breakdowns.length > 1 && (
+        <div className="mt-3 space-y-2">
+          {importedCards.length > 1 && (
+            <div className="flex flex-wrap gap-1.5">
+              {importedCards.map((id) => (
+                <button key={id} type="button" onClick={() => showCard(id)} aria-pressed={shown.cardId === id} className={shown.cardId === id ? 'chip-on' : 'chip'}>
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${seriesClass(cardIndex(id))}`} aria-hidden="true" />
+                  {cardName(id)}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-1 rounded-lg bg-subtle p-1">
+            <button type="button" onClick={() => older && setSelectedId(older.id)} disabled={!older} aria-label="Earlier month" className={STEP_BUTTON}>
+              <ChevronLeft size={18} />
             </button>
-          ))}
+            <label className="relative flex min-h-9 flex-1 items-center justify-center gap-1 rounded-md text-sm text-ink focus-within:ring-2 focus-within:ring-accent hover:bg-card">
+              {monthLabel(shown.usageMonth)}
+              {shownMonths.length > 1 && <ChevronDown size={14} className="text-ink-3" aria-hidden="true" />}
+              <select
+                value={shown.id}
+                onChange={(event) => setSelectedId(event.target.value)}
+                disabled={shownMonths.length < 2}
+                aria-label={`${cardName(shown.cardId)} month`}
+                className="absolute inset-0 cursor-pointer opacity-0 disabled:cursor-default"
+              >
+                {shownMonths.map((item) => <option key={item.id} value={item.id}>{monthLabel(item.usageMonth)}</option>)}
+              </select>
+            </label>
+            <button type="button" onClick={() => newer && setSelectedId(newer.id)} disabled={!newer} aria-label="Later month" className={STEP_BUTTON}>
+              <ChevronRight size={18} />
+            </button>
+          </div>
         </div>
       )}
 
-      {shown ? renderBreakdown(shown) : !preview && (
+      {shown ? renderBreakdown(shown, breakdowns.length < 2) : !preview && (
         <p className="mt-3 text-[13px] leading-relaxed text-ink-2">
           Import a PayPay history CSV from the PayPay app, or a statement CSV from the Vpass website, to see categories and top places for that card.
         </p>
