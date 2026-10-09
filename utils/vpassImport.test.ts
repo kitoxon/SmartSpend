@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NotVpassStatementError, parseVpassStatement } from './vpassImport';
+import { NotVpassStatementError, VpassMonth, guessStatementCard, parseVpassStatement } from './vpassImport';
 import { categorizeMerchant, merchantBrand, normalizeMerchant } from './merchants';
 
 // Made-up rows in the Vpass statement format.
@@ -45,6 +45,8 @@ describe('statement shop names', () => {
     expect(normalizeMerchant('ＡＭＡＺＯＮ．ＣＯ．ＪＰ')).toBe('AMAZON.CO.JP');
     expect(normalizeMerchant('業務ス－パ－')).toBe('業務スーパー');
     expect(normalizeMerchant('ラクテンブロ―ドバンド')).toBe('ラクテンブロードバンド');
+    expect(normalizeMerchant('セブン-イレブン')).toBe('セブン-イレブン'); // A real hyphen stays
+    expect(merchantBrand('セブン-イレブン - 本町')).toBe('セブン-イレブン');
   });
 
   it('groups statement shops', () => {
@@ -56,5 +58,32 @@ describe('statement shop names', () => {
     expect(categorizeMerchant('ゆめマ－ト  中央店（食')).toBe('Groceries');
     expect(merchantBrand('イオン九州  ＳＳＭ')).toBe('イオン九州');
     expect(merchantBrand('西部ガス利用料金２０２６／０９')).toBe('西部ガス利用料金');
+  });
+});
+
+describe('which card a statement belongs to', () => {
+  const amazon = { id: 'amazon', name: 'Amazon Mastercard' };
+  const olive = { id: 'olive', name: 'Olive' };
+  const paypay = { id: 'paypay', name: 'PayPay Card' };
+  const cards = [amazon, olive, paypay];
+  const month = (places: [string, number][]): VpassMonth => ({
+    billingMonth: '2026-11', usageMonth: '2026-10', firstDate: '2026-10-01', lastDate: '2026-10-30', count: places.length, foreignCount: 0,
+    revolving: false, billed: null, purchases: places.reduce((sum, [, amount]) => sum + amount, 0),
+    categories: [], places: places.map(([label, amount]) => ({ label, amount, count: 1 })),
+  });
+
+  it('does not pick the Amazon card for one Amazon order among other shops', () => {
+    expect(guessStatementCard([month([['ニトリ', 8000], ['西部ガス利用料金', 4000], ['AMAZON.CO.JP', 1500]])], cards, [])).toBe(olive);
+    expect(guessStatementCard([month([['AMAZON.CO.JP', 5000], ['空手', 600]])], cards, [])).toBe(amazon);
+  });
+
+  it('prefers the card whose earlier statements had the same shops', () => {
+    const earlier = [{ cardId: 'amazon', usageMonth: '2026-09', source: 'vpass', places: [{ label: '西部ガス利用料金', amount: 4000, count: 1 }] }];
+    expect(guessStatementCard([month([['西部ガス利用料金', 4100], ['AMAZON.CO.JP', 900]])], cards, earlier)).toBe(amazon);
+  });
+
+  it('prefers a card not imported yet for the month', () => {
+    const done = [{ cardId: 'olive', usageMonth: '2026-10', source: 'vpass', places: [{ label: 'ニトリ', amount: 1, count: 1 }] }];
+    expect(guessStatementCard([month([['ドトール', 500]])], cards, done)).toBe(amazon);
   });
 });

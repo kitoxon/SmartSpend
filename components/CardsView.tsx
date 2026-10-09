@@ -189,8 +189,11 @@ export const CardsView: React.FC<CardsViewProps> = ({
       const topIndex = perCard.reduce((top, amount, index) => (amount > 0 ? index : top), -1);
       return { usageMonth, perCard, topIndex, total: perCard.reduce((sum, amount) => sum + amount, 0) };
     });
-    const firstWithData = rows.findIndex((row) => row.total > 0);
-    return firstWithData === -1 ? [] : rows.slice(firstWithData);
+    // A finished month whose bills aren't in yet would show as ¥0 and a −100%
+    // drop, so the chart ends at the latest month with data.
+    const withData = rows.map((row) => row.total > 0);
+    const firstWithData = withData.indexOf(true);
+    return firstWithData === -1 ? [] : rows.slice(firstWithData, withData.lastIndexOf(true) + 1);
   }, [cards, data, month]);
 
   const totals = history.map((row) => row.total);

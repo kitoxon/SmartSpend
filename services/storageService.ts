@@ -161,6 +161,16 @@ const removeQueuedEntity = (userId: string, table: SyncTable, recordId: string) 
   return remaining;
 };
 
+// A cloud read must not overwrite a save made while it was out: each save
+// bumps its table's version and is counted until its cloud write finishes.
+const writeVersions = new Map<SyncTable, number>();
+const writesInFlight = new Map<SyncTable, number>();
+const writeVersion = (table: SyncTable) => writeVersions.get(table) ?? 0;
+/** Called first in every save and delete, before anything is awaited. */
+const noteLocalWrite = (table: SyncTable) => writeVersions.set(table, writeVersion(table) + 1);
+const changedLocallySince = (table: SyncTable, version: number) =>
+  writeVersion(table) !== version || (writesInFlight.get(table) ?? 0) > 0;
+
 const syncMutation = async (mutation: Omit<PendingMutation, 'mutationId' | 'queuedAt'>) => {
   if (!supabase) return;
   const queued: PendingMutation = {
@@ -168,6 +178,8 @@ const syncMutation = async (mutation: Omit<PendingMutation, 'mutationId' | 'queu
     mutationId: crypto.randomUUID(),
     queuedAt: new Date().toISOString(),
   };
+  writeVersions.set(mutation.table, writeVersion(mutation.table) + 1);
+  writesInFlight.set(mutation.table, (writesInFlight.get(mutation.table) ?? 0) + 1);
   try {
     await applyRemoteMutation(queued);
     const remaining = removeQueuedEntity(mutation.userId, mutation.table, mutation.recordId);
@@ -178,6 +190,8 @@ const syncMutation = async (mutation: Omit<PendingMutation, 'mutationId' | 'queu
   } catch (error) {
     queueMutation(mutation);
     emitSyncSnapshot({ lastError: errorMessage(error) });
+  } finally {
+    writesInFlight.set(mutation.table, (writesInFlight.get(mutation.table) ?? 1) - 1);
   }
 };
 
@@ -310,6 +324,7 @@ export const getTransactions = async (): Promise<Transaction[]> => {
   if (!supabase) return local;
 
   try {
+    const version = writeVersion('transactions');
     await prepareCloudRead('transactions');
     const { data, error } = await supabase
       .from('transactions')
@@ -318,6 +333,8 @@ export const getTransactions = async (): Promise<Transaction[]> => {
       .order('date', { ascending: false })
       .order('created_at', { ascending: false });
     if (error) throw error;
+    // A save landed while this read was out; this device's copy is newer.
+    if (changedLocallySince('transactions', version)) return sortTransactions(readLocal<Transaction[]>(STORAGE_KEY, userId, []));
     const remote = sortTransactions((data ?? []).map((row) => stripOwner(row as Transaction & { user_id?: string })));
     if (remote.length === 0 && local.length > 0) {
       const migrated = await migrateLegacyRowsIfNeeded(STORAGE_KEY, 'transactions', userId, local);
@@ -334,6 +351,7 @@ export const getTransactions = async (): Promise<Transaction[]> => {
 };
 
 export const saveTransaction = async (transaction: Transaction): Promise<void> => {
+  noteLocalWrite('transactions');
   const userId = supabase ? await getRequiredUserId() : null;
   const record: Transaction = {
     ...transaction,
@@ -345,6 +363,7 @@ export const saveTransaction = async (transaction: Transaction): Promise<void> =
 };
 
 export const deleteTransaction = async (id: string): Promise<void> => {
+  noteLocalWrite('transactions');
   const userId = supabase ? await getRequiredUserId() : null;
   const current = readLocal<Transaction[]>(STORAGE_KEY, userId, []);
   writeLocal(STORAGE_KEY, userId, current.filter((item) => item.id !== id));
@@ -373,6 +392,7 @@ export const getRecurringTransactions = async (): Promise<RecurringTransaction[]
   if (!supabase) return local;
 
   try {
+    const version = writeVersion('recurring_transactions');
     await prepareCloudRead('recurring_transactions');
     const { data, error } = await supabase
       .from('recurring_transactions')
@@ -380,6 +400,8 @@ export const getRecurringTransactions = async (): Promise<RecurringTransaction[]
       .eq('user_id', userId)
       .order('next_due', { ascending: true });
     if (error) throw error;
+    // A save landed while this read was out; this device's copy is newer.
+    if (changedLocallySince('recurring_transactions', version)) return readLocal<RecurringTransaction[]>(RECURRING_KEY, userId, []);
     const remote = (data ?? []).map((row) => recurringFromRow(row as Record<string, unknown>));
     if (remote.length === 0 && local.length > 0) {
       const migrated = await migrateLegacyRowsIfNeeded(RECURRING_KEY, 'recurring_transactions', userId, local, recurringToRow);
@@ -396,6 +418,7 @@ export const getRecurringTransactions = async (): Promise<RecurringTransaction[]
 };
 
 export const saveRecurringTransaction = async (recurring: RecurringTransaction): Promise<void> => {
+  noteLocalWrite('recurring_transactions');
   const userId = supabase ? await getRequiredUserId() : null;
   const current = readLocal<RecurringTransaction[]>(RECURRING_KEY, userId, []);
   writeLocal(RECURRING_KEY, userId, [recurring, ...current.filter((item) => item.id !== recurring.id)]);
@@ -411,6 +434,7 @@ export const saveRecurringTransaction = async (recurring: RecurringTransaction):
 };
 
 export const deleteRecurringTransaction = async (id: string): Promise<void> => {
+  noteLocalWrite('recurring_transactions');
   const userId = supabase ? await getRequiredUserId() : null;
   const current = readLocal<RecurringTransaction[]>(RECURRING_KEY, userId, []);
   writeLocal(RECURRING_KEY, userId, current.filter((item) => item.id !== id));
@@ -466,9 +490,12 @@ export const getDebts = async (): Promise<Debt[]> => {
   if (!supabase) return local;
 
   try {
+    const version = writeVersion('debts');
     await prepareCloudRead('debts');
     const { data, error } = await supabase.from('debts').select('*').eq('user_id', userId);
     if (error) throw error;
+    // A save landed while this read was out; this device's copy is newer.
+    if (changedLocallySince('debts', version)) return readLocal<Debt[]>(DEBT_STORAGE_KEY, userId, []);
     const remote = (data ?? []).map((row) => stripOwner(row as Debt & { user_id?: string }));
     if (remote.length === 0 && local.length > 0) {
       const migrated = await migrateLegacyRowsIfNeeded(DEBT_STORAGE_KEY, 'debts', userId, local);
@@ -485,6 +512,7 @@ export const getDebts = async (): Promise<Debt[]> => {
 };
 
 export const saveDebt = async (debt: Debt): Promise<void> => {
+  noteLocalWrite('debts');
   const userId = supabase ? await getRequiredUserId() : null;
   const current = readLocal<Debt[]>(DEBT_STORAGE_KEY, userId, []);
   writeLocal(DEBT_STORAGE_KEY, userId, [debt, ...current.filter((item) => item.id !== debt.id)]);
@@ -492,6 +520,7 @@ export const saveDebt = async (debt: Debt): Promise<void> => {
 };
 
 export const deleteDebt = async (id: string): Promise<void> => {
+  noteLocalWrite('debts');
   const userId = supabase ? await getRequiredUserId() : null;
   const current = readLocal<Debt[]>(DEBT_STORAGE_KEY, userId, []);
   writeLocal(DEBT_STORAGE_KEY, userId, current.filter((item) => item.id !== id));
@@ -504,9 +533,12 @@ export const getGoals = async (): Promise<Goal[]> => {
   if (!supabase) return local;
 
   try {
+    const version = writeVersion('goals');
     await prepareCloudRead('goals');
     const { data, error } = await supabase.from('goals').select('*').eq('user_id', userId);
     if (error) throw error;
+    // A save landed while this read was out; this device's copy is newer.
+    if (changedLocallySince('goals', version)) return readLocal<Goal[]>(GOAL_STORAGE_KEY, userId, []);
     const remote = (data ?? []).map((row) => stripOwner(row as Goal & { user_id?: string }));
     if (remote.length === 0 && local.length > 0) {
       const migrated = await migrateLegacyRowsIfNeeded(GOAL_STORAGE_KEY, 'goals', userId, local);
@@ -523,6 +555,7 @@ export const getGoals = async (): Promise<Goal[]> => {
 };
 
 export const saveGoal = async (goal: Goal): Promise<void> => {
+  noteLocalWrite('goals');
   const userId = supabase ? await getRequiredUserId() : null;
   const current = readLocal<Goal[]>(GOAL_STORAGE_KEY, userId, []);
   writeLocal(GOAL_STORAGE_KEY, userId, [goal, ...current.filter((item) => item.id !== goal.id)]);
@@ -530,6 +563,7 @@ export const saveGoal = async (goal: Goal): Promise<void> => {
 };
 
 export const deleteGoal = async (id: string): Promise<void> => {
+  noteLocalWrite('goals');
   const userId = supabase ? await getRequiredUserId() : null;
   const current = readLocal<Goal[]>(GOAL_STORAGE_KEY, userId, []);
   writeLocal(GOAL_STORAGE_KEY, userId, current.filter((item) => item.id !== id));
@@ -553,9 +587,12 @@ export const getPlannerRecords = async (): Promise<PlannerRecord[]> => {
   if (!supabase) return local;
 
   try {
+    const version = writeVersion('planner_records');
     await prepareCloudRead('planner_records');
     const { data, error } = await supabase.from('planner_records').select('id, kind, data, updated_at').eq('user_id', userId);
     if (error) throw error;
+    // A save landed while this read was out; this device's copy is newer.
+    if (changedLocallySince('planner_records', version)) return readLocal<PlannerRecord[]>(PLANNER_KEY, userId, []);
     const remote = (data ?? []) as PlannerRecord[];
     writeLocal(PLANNER_KEY, userId, remote);
     noteCloudReadSuccess();
@@ -567,6 +604,7 @@ export const getPlannerRecords = async (): Promise<PlannerRecord[]> => {
 };
 
 export const savePlannerRecord = async (kind: PlannerKind, id: string, data: unknown): Promise<PlannerRecord> => {
+  noteLocalWrite('planner_records');
   const userId = supabase ? await getRequiredUserId() : null;
   const record: PlannerRecord = { id, kind, data, updated_at: new Date().toISOString() };
   const current = readLocal<PlannerRecord[]>(PLANNER_KEY, userId, []);
@@ -576,6 +614,7 @@ export const savePlannerRecord = async (kind: PlannerKind, id: string, data: unk
 };
 
 export const deletePlannerRecord = async (id: string): Promise<void> => {
+  noteLocalWrite('planner_records');
   const userId = supabase ? await getRequiredUserId() : null;
   const current = readLocal<PlannerRecord[]>(PLANNER_KEY, userId, []);
   writeLocal(PLANNER_KEY, userId, current.filter((item) => item.id !== id));

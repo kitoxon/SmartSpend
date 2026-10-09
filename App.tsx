@@ -18,7 +18,7 @@ import {
   CardBillInput, SETTINGS_RECORD_ID, buildCardBill, installmentDueOnBill, isPlannerConfigured, markCardBillPaid, toPlannerData, unmarkCardBillPaid,
 } from './services/planner';
 import {
-  Obligation, billPaymentId, buildCyclePlan, cardDueDate, cardUsageId, cycleForDate, cycleRecordId, getCycle, monthlyInterest, statementId,
+  Obligation, PayCycle, billPaymentId, buildCyclePlan, cardDueDate, cardUsageId, cycleForDate, cycleRecordId, getCycle, monthlyInterest, statementId,
   suggestedCarryover,
 } from './utils/payCycle';
 import { monthsBetween, shiftMonthKey, todayLocalDate } from './utils/jpCalendar';
@@ -207,6 +207,11 @@ const App: React.FC = () => {
   }, [plannerData.cycles, currentCycle.key, currentPlan.record, settings, planInput]);
   const latestSalary = [...plannerData.cycles].filter((record) => record.salary > 0).sort((a, b) => b.key.localeCompare(a.key))[0]?.salary ?? null;
   const cardNames = useMemo(() => Object.fromEntries(plannerData.cards.map((card) => [card.id, card.name])), [plannerData.cards]);
+  // Activity counts a cycle from the same day Home does: its mid-cycle start, if any.
+  const trackedRange = (cycle: PayCycle) => {
+    const from = plannerData.cycles.find((record) => record.key === cycle.key)?.trackingFrom;
+    return { start: from && from > cycle.start ? from : cycle.start, end: cycle.end };
+  };
 
   const putPlanner = async (kind: PlannerKind, id: string, data: unknown) => {
     const record: PlannerRecord = { id, kind, data, updated_at: new Date().toISOString() };
@@ -689,7 +694,7 @@ const App: React.FC = () => {
             />
           )}
           {currentView === 'list' && (
-            <ExpenseList expenses={transactions} onEdit={(transaction) => openTransactionForm(null, transaction)} currentCycle={currentCycle} previousCycle={previousCycle} />
+            <ExpenseList expenses={transactions} onEdit={(transaction) => openTransactionForm(null, transaction)} currentCycle={trackedRange(currentCycle)} previousCycle={trackedRange(previousCycle)} />
           )}
           {currentView === 'cards' && (
             <CardsView

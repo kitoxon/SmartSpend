@@ -13,7 +13,8 @@ export interface MerchantGroup {
  * katakana become ー (業務ス－パ－ → 業務スーパー).
  */
 const cleanWidthAndDashes = (name: string) =>
-  name.normalize('NFKC').replace(/([゠-ヿ])[-‐‑‒–—―−ｰ]/g, '$1ー');
+  // A long vowel never follows ン, ッ or ・, so a dash there is a real hyphen (セブン-イレブン).
+  name.normalize('NFKC').replace(/([゠-ヿ])[-‐‑‒–—―−ｰ]/g, (_dash, before: string) => (/[ンッ・]/.test(before) ? `${before}-` : `${before}ー`));
 
 export const normalizeMerchant = (name: string) => cleanWidthAndDashes(name).replace(/\s+/g, ' ').trim();
 

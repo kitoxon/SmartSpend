@@ -99,3 +99,40 @@ export const parseVpassStatement = (text: string): VpassMonth[] => {
     };
   });
 };
+
+interface CardLike {
+  id: string;
+  name: string;
+}
+
+interface ImportedMonthLike {
+  cardId: string;
+  usageMonth: string;
+  source: string;
+  places: MerchantGroup[];
+}
+
+/**
+ * Which card a statement most likely belongs to. Vpass files don't name the
+ * card, so: shops seen on a card's earlier statements (gas, phone, Prime
+ * repeat monthly), then a card not yet imported for this month, then the
+ * Amazon card only if most purchases are at Amazon.
+ */
+export const guessStatementCard = <C extends CardLike>(months: VpassMonth[], cards: C[], imported: ImportedMonthLike[]) => {
+  const candidates = cards.filter((card) => !/paypay/i.test(card.name));
+  if (candidates.length === 0) return cards[0];
+
+  const shops = new Set(months.flatMap((month) => month.places.map((place) => place.label)));
+  const overlap = (card: C) => imported
+    .filter((item) => item.cardId === card.id && item.source === 'vpass')
+    .reduce((count, item) => count + item.places.filter((place) => shops.has(place.label)).length, 0);
+  const best = [...candidates].sort((a, b) => overlap(b) - overlap(a))[0];
+  if (overlap(best) > 0) return best;
+
+  const notImported = candidates.filter((card) => !imported.some((item) => item.cardId === card.id && months.some((month) => month.usageMonth === item.usageMonth)));
+  const pool = notImported.length ? notImported : candidates;
+  const total = months.reduce((sum, month) => sum + month.purchases, 0);
+  const atAmazon = months.reduce((sum, month) => sum + month.places.filter((place) => /amazon/i.test(place.label)).reduce((s, place) => s + place.amount, 0), 0);
+  const isAmazon = (card: C) => /amazon/i.test(card.name);
+  return (total > 0 && atAmazon / total >= 0.5 ? pool.find(isAmazon) : pool.find((card) => !isAmazon(card))) ?? pool[0];
+};

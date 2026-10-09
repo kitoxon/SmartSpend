@@ -2,13 +2,13 @@ import React, { useMemo, useRef, useState } from 'react';
 import { FileUp, Trash2 } from 'lucide-react';
 import { Card, CardBreakdown, CardUsage, PlannerData } from '../types';
 import { cardBreakdownId, cardDueDate, cardUsageId } from '../utils/payCycle';
-import { LocalDate, dayOfMonth, formatShortDate, formatWeekdayDate, monthKeyOf } from '../utils/jpCalendar';
+import { LocalDate, dayOfMonth, formatShortDate, formatWeekdayDate, fromDate, monthKeyOf } from '../utils/jpCalendar';
 import { formatMonthName, formatYen } from '../utils/format';
 import { MerchantGroup } from '../utils/merchants';
 import {
   NotPaypayHistoryError, PaypayPayment, creditMethodsIn, parsePaypayHistory, summarizePaypayHistory,
 } from '../utils/paypayImport';
-import { NotVpassStatementError, VpassMonth, parseVpassStatement } from '../utils/vpassImport';
+import { NotVpassStatementError, VpassMonth, guessStatementCard, parseVpassStatement } from '../utils/vpassImport';
 
 export interface ImportedBill {
   card: Card;
@@ -111,12 +111,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
   /** Best guess at the card a file belongs to; always shown so it can be changed. */
   const guessCard = (next: Preview) => {
     if (next.kind === 'paypay') return (cards.find((item) => /paypay/i.test(item.name)) ?? cards[0])?.id ?? '';
-    const statementCards = cards.filter((item) => !/paypay/i.test(item.name));
-    const mentionsAmazon = next.months.some((month) => month.places.some((place) => /amazon/i.test(place.label)));
-    const guess = mentionsAmazon
-      ? statementCards.find((item) => /amazon/i.test(item.name))
-      : statementCards.find((item) => !/amazon/i.test(item.name));
-    return (guess ?? statementCards[0] ?? cards[0])?.id ?? '';
+    return guessStatementCard(next.months, cards, data.cardBreakdowns)?.id ?? '';
   };
 
   const chooseFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -189,7 +184,10 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
   const renderBreakdown = (breakdown: CardBreakdown) => {
     const isStatement = breakdown.source === 'vpass';
     const statement = statementFor(breakdown.cardId, breakdown.usageMonth);
-    const billPurchases = statement ? statement.amount - statement.installment : null;
+    // Without an entered bill, a total typed after the month ended is the bill.
+    const finalTotal = data.cardUsage.find((item) => item.cardId === breakdown.cardId && item.usageMonth === breakdown.usageMonth && item.asOf > dayOfMonth(item.usageMonth, 'last'));
+    const billPurchases = statement ? statement.amount - statement.installment : finalTotal?.amount ?? null;
+    const billLabel = statement ? 'bill' : 'total you entered';
     // A PayPay history misses what the bill has from outside the app (ETC
     // tolls, using the card directly), or runs over when late payments move
     // to next month. A statement already is the bill.
@@ -208,7 +206,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
               {isStatement ? 'Vpass statement' : 'PayPay history'}, {formatShortDate(breakdown.firstDate)}–{formatShortDate(breakdown.lastDate)}:{' '}
               {breakdown.payments} {isStatement ? 'purchases' : 'payments'}, {formatYen(breakdown.charged)}{isStatement ? '' : ' on the card'}
               {isStatement && breakdown.billed !== undefined && ` · bill ${formatYen(breakdown.billed)}`}
-              {!isStatement && billPurchases ? ` · ${Math.min(100, Math.round((breakdown.charged / billPurchases) * 100))}% of the ${formatYen(billPurchases)} bill` : ''}
+              {!isStatement && billPurchases ? ` · ${Math.min(100, Math.round((breakdown.charged / billPurchases) * 100))}% of the ${formatYen(billPurchases)} ${billLabel}` : ''}
             </p>
           </div>
           <button type="button" onClick={() => void onDelete(breakdown.id)} aria-label="Remove this import" className="shrink-0 rounded-lg p-2 text-ink-3 hover:bg-subtle hover:text-bad">
@@ -258,13 +256,13 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
               <div className="mt-1 h-2" aria-hidden="true">
                 <div className="h-full rounded-r-[4px] bg-line-strong" style={{ width: `${Math.max(1, (notInHistory / largest) * 100)}%` }} />
               </div>
-              <p className="mt-1 text-xs text-ink-3">Such as ETC tolls or using the card directly. Together with the above, this makes the {formatYen(billPurchases ?? 0)} bill.</p>
+              <p className="mt-1 text-xs text-ink-3">Such as ETC tolls or using the card directly. Together with the above, this makes the {formatYen(billPurchases ?? 0)} {billLabel}.</p>
             </li>
           )}
         </ul>
         {notInHistory <= -1 && (
           <p className="mt-2 text-xs leading-relaxed text-ink-3">
-            These payments come to {formatYen(notInHistory)} more than the bill. Payments from the last days of the month are often billed the month after.
+            These payments come to {formatYen(notInHistory)} more than the {billLabel}. Payments from the last days of the month are often billed the month after.
           </p>
         )}
 
@@ -358,6 +356,14 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
               Use the amount on the card as this card's month total, unless its bill is already entered
             </label>
           )}
+          {card && months.map((month) => {
+            const existing = data.cardBreakdowns.find((item) => item.cardId === card.id && item.usageMonth === month.usageMonth);
+            return existing && (
+              <p key={`replace-${month.usageMonth}`} className="rounded-lg bg-warn-soft px-3 py-2 text-xs leading-relaxed text-warn">
+                Replaces the {card.name} {monthLabel(month.usageMonth)} import from {formatShortDate(fromDate(new Date(existing.importedAt)))}. Check the card if that's not what you meant.
+              </p>
+            );
+          })}
           <div className="flex gap-2">
             <button type="button" onClick={() => setPreview(null)} className="btn flex-1">Cancel</button>
             <button type="button" onClick={() => void confirmImport()} disabled={saving || !card} className="btn-primary flex-[2]">{saving ? 'Importing…' : 'Import'}</button>
