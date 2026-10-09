@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  ArrowRight, Check, ChevronLeft, ChevronRight, CreditCard, Droplets, HandCoins, Home, Landmark, Plus, Sparkles, Zap,
+  ArrowLeftRight, ArrowRight, Check, ChevronLeft, ChevronRight, CreditCard, Droplets, Home, Landmark, Plus, Sparkles, Zap,
 } from 'lucide-react';
 import { Transaction } from '../types';
 import { CyclePlan, Obligation, cycleBreakdown, unusuallyHighBy } from '../utils/payCycle';
@@ -29,7 +29,7 @@ interface CycleHomeProps {
 const ObligationIcon: React.FC<{ obligation: Obligation }> = ({ obligation }) => {
   const props = { size: 15, 'aria-hidden': true, className: 'shrink-0 text-ink-3' } as const;
   if (obligation.kind === 'card') return <CreditCard {...props} />;
-  if (obligation.kind === 'debt') return <HandCoins {...props} />;
+  if (obligation.kind === 'debt') return <ArrowLeftRight {...props} />;
   if (/water|水道/i.test(obligation.label)) return <Droplets {...props} />;
   if (/rent|家賃/i.test(obligation.label)) return <Home {...props} />;
   if (/electric|gas|電気|ガス/i.test(obligation.label)) return <Zap {...props} />;

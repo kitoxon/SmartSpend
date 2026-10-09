@@ -1,7 +1,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
-  ArrowLeftRight, ChevronRight, Cloud, CloudOff, CreditCard, Download, History, Home, MoreHorizontal, Plus, ReceiptJapaneseYen, RefreshCw,
+  ArrowLeftRight, ChevronRight, Cloud, CloudOff, CreditCard, Download, HandCoins, History, Home, MoreHorizontal, Plus, RefreshCw,
   Settings, SlidersHorizontal, Target,
 } from 'lucide-react';
 import {
@@ -718,7 +718,7 @@ const App: React.FC = () => {
       <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-page/95 backdrop-blur pb-safe">
         <div className="mx-auto grid max-w-5xl grid-cols-5 items-center px-2 pt-1">
           {navItem('home', 'Home', <Home size={20} />, () => { setCurrentView('home'); setCycleOffset(0); })}
-          {navItem('list', 'Activity', <ReceiptJapaneseYen size={20} />)}
+          {navItem('list', 'Activity', <HandCoins size={20} />)}
           <div className="flex justify-center">
             <button type="button" onClick={() => setIsCashOpen(true)} aria-label="Add cash expense" className="flex h-12 w-12 items-center justify-center rounded-full bg-ink text-on-ink transition hover:opacity-90 active:scale-95">
               <Plus size={22} />
