@@ -72,7 +72,8 @@ const readImportFile = async (file: File): Promise<Preview> => {
   throw new Error("This file isn't a PayPay history or a Vpass statement CSV.");
 };
 
-const STEP_BUTTON = 'flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-ink-2 transition hover:bg-card hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent';
+// Styled like .btn: no fill at rest, bg-subtle on hover.
+const STEP_BUTTON = 'flex w-11 shrink-0 items-center justify-center text-ink-2 transition hover:bg-subtle hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-ink-2';
 
 const monthLabel = (usageMonth: string) => `${formatMonthName(usageMonth)} ${usageMonth.slice(0, 4)}`;
 
@@ -420,11 +421,11 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
               ))}
             </div>
           )}
-          <div className="flex items-center gap-1 rounded-lg bg-subtle p-1">
-            <button type="button" onClick={() => older && setSelectedId(older.id)} disabled={!older} aria-label="Earlier month" className={STEP_BUTTON}>
+          <div className="flex min-h-11 items-stretch rounded-lg border border-line-strong">
+            <button type="button" onClick={() => older && setSelectedId(older.id)} disabled={!older} aria-label="Earlier month" className={`${STEP_BUTTON} rounded-l-[7px]`}>
               <ChevronLeft size={18} />
             </button>
-            <label className="relative flex min-h-9 flex-1 items-center justify-center gap-1 rounded-md text-sm text-ink focus-within:ring-2 focus-within:ring-accent hover:bg-card">
+            <label className="relative flex flex-1 items-center justify-center gap-1 text-sm font-medium text-ink transition focus-within:ring-2 focus-within:ring-inset focus-within:ring-accent hover:bg-subtle">
               {monthLabel(shown.usageMonth)}
               {shownMonths.length > 1 && <ChevronDown size={14} className="text-ink-3" aria-hidden="true" />}
               <select
@@ -437,7 +438,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
                 {shownMonths.map((item) => <option key={item.id} value={item.id}>{monthLabel(item.usageMonth)}</option>)}
               </select>
             </label>
-            <button type="button" onClick={() => newer && setSelectedId(newer.id)} disabled={!newer} aria-label="Later month" className={STEP_BUTTON}>
+            <button type="button" onClick={() => newer && setSelectedId(newer.id)} disabled={!newer} aria-label="Later month" className={`${STEP_BUTTON} rounded-r-[7px]`}>
               <ChevronRight size={18} />
             </button>
           </div>
