@@ -35,6 +35,33 @@ describe('Vpass statement', () => {
     expect(month.billed).toBe(5_300);
   });
 
+  it('reads the layout without a payment month', () => {
+    // Made-up rows in the statement layout, after a full payment of the revolving balance.
+    const statement = [
+      'テスト　タロウ　様,1234-56**-****-****,Ｏｌｉｖｅ／クレジット',
+      '2026/08/31,西部ガス利用料金２０２６／０８,3000,,,,',
+      '2026/09/12,ユナイテッド・シネマ　中央／ＮＦＣ,1800,,,,',
+      '2026/09/27,イオン九州　ＳＳＭ,1200,,,,',
+      '2026/09/18,WWW.EXAMPLE.MN (EXAMPLE.MN ),2000,,,,12.34　USD　162.07　09 18',
+      ',※マイ・ペイすリボ追加お支払（弁済金）※,,,,9500,',
+      ',本明細書作成までのご返済情報を反映した金額となります。,,,,,',
+      ',,,,,9500,',
+    ].join('\r\n');
+    const [month] = parseVpassStatement(statement);
+    expect(month).toMatchObject({
+      billingMonth: '2026-10', // From the latest purchase: September closes and is paid in October
+      usageMonth: '2026-09',
+      firstDate: '2026-08-31',
+      lastDate: '2026-09-27',
+      purchases: 8_000,
+      count: 4,
+      foreignCount: 1,
+      revolving: true,
+      billed: 9_500, // The closing total, not both total rows added up
+      cardName: 'Ｏｌｉｖｅ／クレジット',
+    });
+  });
+
   it('rejects other files', () => {
     expect(() => parseVpassStatement('date,amount\n2026-09-01,100')).toThrow(NotVpassStatementError);
   });
@@ -87,6 +114,12 @@ describe('which card a statement belongs to', () => {
   it('prefers the card whose earlier statements had the same shops', () => {
     const earlier = [{ cardId: 'amazon', usageMonth: '2026-09', source: 'vpass', places: [{ label: '西部ガス利用料金', amount: 4000, count: 1 }] }];
     expect(guessStatementCard([month([['西部ガス利用料金', 4100], ['AMAZON.CO.JP', 900]])], cards, earlier)).toBe(amazon);
+  });
+
+  it('trusts the card the statement names', () => {
+    const named = { ...month([['AMAZON.CO.JP', 5000]]), cardName: 'Ｏｌｉｖｅ／クレジット' };
+    expect(guessStatementCard([named], cards, [])).toBe(olive);
+    expect(guessStatementCard([{ ...named, cardName: '三井住友カード' }], cards, [])).toBe(amazon);
   });
 
   it('prefers a card not imported yet for the month', () => {

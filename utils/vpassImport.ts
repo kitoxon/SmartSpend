@@ -1,11 +1,15 @@
-import { LocalDate, ymd, shiftMonthKey } from './jpCalendar';
+import { LocalDate, monthKeyOf, ymd, shiftMonthKey } from './jpCalendar';
 import { MerchantGroup, groupMerchants } from './merchants';
 import { parseCsv } from './paypayImport';
 
-// Reads the statement CSV downloaded from the SMBC Vpass website (三井住友カード,
-// Olive). Columns: use date, shop, user, payment type, -, payment month ('26/10),
-// amount used, amount paid this time, -, foreign amount, currency, rate, date.
-// Rows without a date are totals such as "リボ払いお支払い".
+// Reads the statement CSVs downloaded from the SMBC Vpass website (三井住友カード,
+// Olive). Both start with a line naming the cardholder, the masked card number
+// and the card (Ｏｌｉｖｅ／クレジット), and rows without a date are totals such as
+// "リボ払いお支払い". Two layouts exist:
+// - with a payment month: use date, shop, user, payment type, -, payment month
+//   ('26/10), amount used, amount paid this time, -, foreign amount, currency, rate, date;
+// - without one: use date, shop, amount used, -, -, amount paid this time, and the
+//   foreign details in one cell ("13.96　USD　161.816　09 18").
 
 export interface VpassMonth {
   billingMonth: string; // Month the bill is paid
@@ -15,8 +19,9 @@ export interface VpassMonth {
   purchases: number; // Amount used, every line
   count: number;
   foreignCount: number;
-  revolving: boolean; // Any line on リボ払い
+  revolving: boolean; // Any line or total on リボ払い
   billed: number | null; // This month's payment from the statement
+  cardName?: string; // As the file names it, such as "Ｏｌｉｖｅ／クレジット"
   categories: MerchantGroup[];
   places: MerchantGroup[];
 }
@@ -44,43 +49,63 @@ const useDateOf = (value: string | undefined) => {
   return match ? ymd(Number(match[1]), Number(match[2]), Number(match[3])) : null;
 };
 
+const CARD_NUMBER = /^\s*\d{4}-[\d*]{4}-[\d*]{4}-[\d*]{4}\s*$/;
+// Rows of the layout without a payment month; their month comes from the dates.
+const NO_MONTH = 'no-month';
+
+type MonthRows = {
+  lines: { date: LocalDate; merchant: string; amount: number; foreign: boolean; revolving: boolean }[];
+  totals: { label: string; amount: number }[];
+  paid: number[];
+};
+
 export const parseVpassStatement = (text: string): VpassMonth[] => {
-  const months = new Map<string, {
-    lines: { date: LocalDate; merchant: string; amount: number; foreign: boolean; revolving: boolean }[];
-    totals: { label: string; amount: number }[];
-    paid: number[];
-  }>();
+  const months = new Map<string, MonthRows>();
+  let cardName: string | undefined;
 
   for (const cells of parseCsv(text)) {
+    if (CARD_NUMBER.test(cells[1] ?? '')) {
+      cardName = (cells[2] ?? '').trim() || undefined;
+      continue;
+    }
     const billingMonth = billingMonthOf(cells[5]);
-    if (!billingMonth) continue; // Header lines such as the cardholder name
-    const month = months.get(billingMonth) ?? { lines: [], totals: [], paid: [] };
-    months.set(billingMonth, month);
-    const used = amount(cells[6]);
-    const paidNow = amount(cells[7]);
+    const row = billingMonth
+      ? { key: billingMonth, used: amount(cells[6]), paidNow: amount(cells[7]), foreign: cells[10], revolving: /リボ/.test(cells[3] ?? '') }
+      : { key: NO_MONTH, used: amount(cells[2]), paidNow: amount(cells[5]), foreign: cells[6], revolving: false };
+    const month = months.get(row.key) ?? { lines: [], totals: [], paid: [] };
+    months.set(row.key, month);
     const date = useDateOf(cells[0]);
     if (!date) {
       // A total row; its payment amount is the bill.
-      const total = paidNow ?? used;
+      const total = row.paidNow ?? row.used;
       if (total !== null) month.totals.push({ label: (cells[1] ?? '').trim(), amount: total });
       continue;
     }
-    if (used === null) continue;
+    if (row.used === null) continue;
     month.lines.push({
       date,
       merchant: (cells[1] ?? '').trim(),
-      amount: used,
-      foreign: Boolean((cells[10] ?? '').trim()),
-      revolving: /リボ/.test(cells[3] ?? ''),
+      amount: row.used,
+      foreign: Boolean((row.foreign ?? '').trim()),
+      revolving: row.revolving,
     });
-    if (paidNow !== null) month.paid.push(paidNow);
+    if (row.paidNow !== null) month.paid.push(row.paidNow);
+  }
+
+  // Cards close at month end, so the latest purchase is in the month the statement covers.
+  const noMonth = months.get(NO_MONTH);
+  months.delete(NO_MONTH);
+  if (noMonth?.lines.length) {
+    const latest = noMonth.lines.map((line) => line.date).sort().at(-1)!;
+    months.set(shiftMonthKey(monthKeyOf(latest), 1), noMonth);
   }
 
   if (![...months.values()].some((month) => month.lines.length > 0)) throw new NotVpassStatementError();
 
   return [...months.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([billingMonth, month]) => {
-    // One total row is the bill; with several, a "合計" row is the overall total.
-    const grand = month.totals.find((total) => /合計/.test(total.label));
+    // One total row is the bill. With several, the overall total: a "合計" row,
+    // or the unlabelled row that ends the statement.
+    const grand = month.totals.find((total) => /合計/.test(total.label)) ?? month.totals.find((total) => total.label === '');
     const billed = month.totals.length === 1
       ? month.totals[0].amount
       : grand?.amount ?? (month.totals.length ? month.totals.reduce((sum, total) => sum + total.amount, 0) : month.paid.length ? month.paid.reduce((sum, value) => sum + value, 0) : null);
@@ -93,8 +118,9 @@ export const parseVpassStatement = (text: string): VpassMonth[] => {
       purchases: month.lines.reduce((sum, line) => sum + line.amount, 0),
       count: month.lines.filter((line) => line.amount > 0).length,
       foreignCount: month.lines.filter((line) => line.foreign).length,
-      revolving: month.lines.some((line) => line.revolving),
+      revolving: month.lines.some((line) => line.revolving) || month.totals.some((total) => /リボ/.test(total.label)),
       billed,
+      ...(cardName ? { cardName } : {}),
       ...groupMerchants(month.lines),
     };
   });
@@ -112,15 +138,29 @@ interface ImportedMonthLike {
   places: MerchantGroup[];
 }
 
+// Words in card names that don't tell one SMBC card from another.
+const GENERIC_CARD_WORD = /^(card|credit|visa|master|mastercard|jcb|gold|platinum|classic|smbc|mitsui|sumitomo)$/;
+
+/** Whether the card name in a statement (Ｏｌｉｖｅ／クレジット) matches a card's name (Olive). */
+const namesCard = (statementCardName: string, cardName: string) => {
+  const named = statementCardName.normalize('NFKC').toLowerCase();
+  return cardName.normalize('NFKC').toLowerCase().split(/[^a-z0-9]+/)
+    .some((word) => word.length >= 3 && !GENERIC_CARD_WORD.test(word) && named.includes(word));
+};
+
 /**
- * Which card a statement most likely belongs to. Vpass files don't name the
- * card, so: shops seen on a card's earlier statements (gas, phone, Prime
- * repeat monthly), then a card not yet imported for this month, then the
- * Amazon card only if most purchases are at Amazon.
+ * Which card a statement most likely belongs to: the card the file names,
+ * if it matches one; then shops seen on a card's earlier statements (gas,
+ * phone, Prime repeat monthly), then a card not yet imported for this month,
+ * then the Amazon card only if most purchases are at Amazon.
  */
 export const guessStatementCard = <C extends CardLike>(months: VpassMonth[], cards: C[], imported: ImportedMonthLike[]) => {
   const candidates = cards.filter((card) => !/paypay/i.test(card.name));
   if (candidates.length === 0) return cards[0];
+
+  const statementCardName = months.find((month) => month.cardName)?.cardName;
+  const named = statementCardName ? candidates.find((card) => namesCard(statementCardName, card.name)) : undefined;
+  if (named) return named;
 
   const shops = new Set(months.flatMap((month) => month.places.map((place) => place.label)));
   const overlap = (card: C) => imported

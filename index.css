@@ -128,3 +128,6 @@ input[type='number'] {
 .animate-fade-in { animation: fade-in 0.15s ease-out both; }
 .pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 6px); }
 .pb-safe-3 { padding-bottom: max(env(safe-area-inset-bottom), 12px); }
+/* A row that scrolls sideways without a bar; a cut-off item at the edge shows there's more. */
+.scrollbar-none { scrollbar-width: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }

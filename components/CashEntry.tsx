@@ -5,6 +5,7 @@ import { EXPENSE_CATEGORIES } from '../constants';
 import { formatWeekdayDate, todayLocalDate } from '../utils/jpCalendar';
 import { formatSignedYen, formatYen } from '../utils/format';
 import { localDateInputToIso } from '../utils/date';
+import { isBalanceAdjustment } from '../utils/transactions';
 import { CategoryIcon } from './ui/CategoryIcon';
 
 interface CashEntryProps {
@@ -18,6 +19,10 @@ interface CashEntryProps {
 const CASH_CATEGORIES: Category[] = EXPENSE_CATEGORIES.filter((category) => category !== Category.Debt && category !== Category.Savings);
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', 'back'] as const;
 const DAY_MS = 86_400_000;
+const MAX_NOTE_SUGGESTIONS = 8;
+
+const noteOf = (transaction: Transaction) => transaction.description.replace(/^\(Recurring\)\s*/i, '').trim();
+const sameNote = (a: string, b: string) => a.trim().toLocaleLowerCase() === b.trim().toLocaleLowerCase();
 
 const median = (values: number[]) => {
   const sorted = [...values].sort((a, b) => a - b);
@@ -29,7 +34,8 @@ export const CashEntry: React.FC<CashEntryProps> = ({ transactions, left, onSave
   const recentExpenses = useMemo(() => {
     const cutoff = Date.now() - 120 * DAY_MS;
     return transactions.filter((transaction) =>
-      transaction.type === 'expense' && CASH_CATEGORIES.includes(transaction.category) && new Date(transaction.date).getTime() >= cutoff);
+      transaction.type === 'expense' && CASH_CATEGORIES.includes(transaction.category) && !isBalanceAdjustment(transaction)
+      && new Date(transaction.date).getTime() >= cutoff);
   }, [transactions]);
 
   const orderedCategories = useMemo(() => {
@@ -41,7 +47,7 @@ export const CashEntry: React.FC<CashEntryProps> = ({ transactions, left, onSave
   const shortcuts = useMemo(() => {
     const groups = new Map<string, { description: string; category: Category; amounts: number[] }>();
     for (const transaction of recentExpenses) {
-      const description = transaction.description.replace(/^\(Recurring\)\s*/i, '').trim();
+      const description = noteOf(transaction);
       if (!description) continue;
       const key = `${transaction.category}|${description.toLocaleLowerCase()}`;
       const group = groups.get(key) ?? { description, category: transaction.category, amounts: [] };
@@ -55,13 +61,33 @@ export const CashEntry: React.FC<CashEntryProps> = ({ transactions, left, onSave
       .map((group) => ({ ...group, amount: median(group.amounts) }));
   }, [recentExpenses]);
 
+  // Notes used before in each category, most used first (then most recent),
+  // so a note is usually a tap away instead of the phone keyboard.
+  const notesByCategory = useMemo(() => {
+    const groups = new Map<Category, Map<string, { note: string; count: number; last: number }>>();
+    for (const transaction of recentExpenses) {
+      const note = noteOf(transaction);
+      if (!note) continue;
+      const notes = groups.get(transaction.category) ?? new Map<string, { note: string; count: number; last: number }>();
+      groups.set(transaction.category, notes);
+      const key = note.toLocaleLowerCase();
+      const time = new Date(transaction.date).getTime();
+      const entry = notes.get(key) ?? { note, count: 0, last: 0 };
+      entry.count += 1;
+      if (time >= entry.last) Object.assign(entry, { note, last: time }); // The latest spelling
+      notes.set(key, entry);
+    }
+    return new Map([...groups].map(([group, notes]) => [
+      group,
+      [...notes.values()].sort((a, b) => b.count - a.count || b.last - a.last).slice(0, MAX_NOTE_SUGGESTIONS).map((entry) => entry.note),
+    ]));
+  }, [recentExpenses]);
+
   const [digits, setDigits] = useState('');
   const [category, setCategory] = useState<Category>(orderedCategories[0] ?? Category.Food);
   const [note, setNote] = useState('');
   const [date, setDate] = useState(todayLocalDate());
-  const [showNote, setShowNote] = useState(false);
-  // Focus the note only when asked for, so a shortcut fill doesn't pop up the phone keyboard.
-  const [focusNote, setFocusNote] = useState(false);
+  const [writingNote, setWritingNote] = useState(false);
   const [showDate, setShowDate] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +96,9 @@ export const CashEntry: React.FC<CashEntryProps> = ({ transactions, left, onSave
   const amount = Number(digits || 0);
   const isToday = date === todayLocalDate();
   const visibleCategories = showAll ? orderedCategories : [...new Set([...orderedCategories.slice(0, 4), category])];
+  const noteSuggestions = notesByCategory.get(category) ?? [];
+  // The text field shows when writing, or for a note that isn't one of the suggestions, so a note is never hidden.
+  const showNoteField = writingNote || (note.trim() !== '' && !noteSuggestions.some((suggestion) => sameNote(suggestion, note)));
 
   const press = useCallback((key: (typeof KEYS)[number]) => {
     setError(null);
@@ -134,12 +163,12 @@ export const CashEntry: React.FC<CashEntryProps> = ({ transactions, left, onSave
       {shortcuts.length > 0 && (
         <div>
           <p className="mb-1.5 text-xs text-ink-3">Frequent</p>
-          <div className="flex gap-1.5 overflow-x-auto pb-1">
+          <div className="scrollbar-none flex gap-1.5 overflow-x-auto">
             {shortcuts.map((shortcut) => (
               <button
                 key={`${shortcut.category}-${shortcut.description}`}
                 type="button"
-                onClick={() => { setDigits(String(shortcut.amount)); setCategory(shortcut.category); setNote(shortcut.description); setShowNote(true); setError(null); }}
+                onClick={() => { setDigits(String(shortcut.amount)); setCategory(shortcut.category); setNote(shortcut.description); setWritingNote(false); setError(null); }}
                 className="shrink-0 rounded-lg bg-subtle px-3 py-2 text-[13px] text-ink transition hover:bg-line"
               >
                 {shortcut.description} <span className="text-ink-2">{formatYen(shortcut.amount)}</span>
@@ -149,12 +178,35 @@ export const CashEntry: React.FC<CashEntryProps> = ({ transactions, left, onSave
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        {showNote ? (
-          <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Lunch at work" aria-label="Note" className="field h-10 min-w-0 flex-1" maxLength={80} autoFocus={focusNote} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void save(); } }} />
-        ) : (
-          <button type="button" onClick={() => { setFocusNote(true); setShowNote(true); }} className="btn-ghost"><PenLine size={14} /> Add note</button>
+      <div className="space-y-2">
+        <div className="scrollbar-none flex gap-1.5 overflow-x-auto" role="group" aria-label="Note">
+          {!showNoteField && (
+            <button type="button" onClick={() => setWritingNote(true)} className="chip shrink-0">
+              <PenLine size={14} /> {noteSuggestions.length ? 'Write' : 'Add note'}
+            </button>
+          )}
+          {noteSuggestions.map((suggestion) => {
+            const chosen = sameNote(suggestion, note);
+            return (
+              <button
+                key={suggestion}
+                type="button"
+                onClick={() => { setNote(chosen ? '' : suggestion); setWritingNote(false); setError(null); }}
+                aria-pressed={chosen}
+                className={`shrink-0 ${chosen ? 'chip-on' : 'chip'}`}
+              >
+                {suggestion}
+              </button>
+            );
+          })}
+        </div>
+        {showNoteField && (
+          // Focused only when opened with Write, so tapping a shortcut doesn't pop up the keyboard.
+          <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="Lunch at work" aria-label="Note" className="field h-10" maxLength={80} autoFocus={writingNote} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void save(); } }} />
         )}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
         {showDate ? (
           <input type="date" value={date} max={todayLocalDate()} onChange={(event) => event.target.value && setDate(event.target.value)} aria-label="Date" className="field h-10 w-auto" />
         ) : (

@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight, FileUp, Trash2 } from 'lucide-react';
-import { Card, CardBreakdown, CardUsage, PlannerData } from '../types';
+import { Card, CardBreakdown, CardStatement, CardUsage, PlannerData } from '../types';
 import { cardBreakdownId, cardDueDate, cardUsageId, statementPurchases } from '../utils/payCycle';
 import { LocalDate, dayOfMonth, formatShortDate, formatWeekdayDate, fromDate, monthKeyOf, monthsBetween } from '../utils/jpCalendar';
 import { formatMonthName, formatYen } from '../utils/format';
@@ -74,6 +74,9 @@ const readImportFile = async (file: File): Promise<Preview> => {
 
 // Styled like .btn: no fill at rest, bg-subtle on hover.
 const STEP_BUTTON = 'flex w-11 shrink-0 items-center justify-center text-ink-2 transition hover:bg-subtle hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-ink-2';
+
+/** A bill the import may change: not paid yet, and no part moved into an installment debt. */
+const canReplaceBill = (statement: CardStatement) => !statement.paidAt && !statement.splitAmount;
 
 const monthLabel = (usageMonth: string) => `${formatMonthName(usageMonth)} ${usageMonth.slice(0, 4)}`;
 
@@ -149,9 +152,11 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
     setSaving(true);
     // A statement's payment amount is the bill itself. A PayPay history only
     // gives a month total, used unless the bill is entered or a higher total was typed.
-    const bills: ImportedBill[] = preview.kind === 'vpass' && useAsTotal
-      ? months.flatMap((month) => (month.billed !== null && !statementIn(snapshot, card.id, month.usageMonth) ? [{ card, usageMonth: month.usageMonth, amount: month.billed }] : []))
-      : [];
+    const bills: ImportedBill[] = preview.kind === 'vpass' && useAsTotal ? months.flatMap((month) => {
+      const entered = statementIn(snapshot, card.id, month.usageMonth);
+      const saves = !entered || (entered.amount !== month.billed && canReplaceBill(entered));
+      return month.billed !== null && saves ? [{ card, usageMonth: month.usageMonth, amount: month.billed }] : [];
+    }) : [];
     const usages: CardUsage[] = preview.kind === 'paypay' && useAsTotal ? months.flatMap((month) => {
       const typed = snapshot.cardUsage.find((item) => item.cardId === card.id && item.usageMonth === month.usageMonth);
       if (statementIn(snapshot, card.id, month.usageMonth) || month.charged <= 0 || (typed && typed.amount > month.charged)) return [];
@@ -343,7 +348,9 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
 
       {preview && (
         <div className="mt-3 space-y-3 rounded-xl border border-accent/50 p-3">
-          <p className="truncate text-xs text-ink-3">{preview.kind === 'vpass' ? 'Vpass statement' : 'PayPay history'} · {preview.fileName}</p>
+          <p className="truncate text-xs text-ink-3">
+            {preview.kind === 'vpass' ? `Vpass statement${preview.months[0]?.cardName ? ` for ${preview.months[0].cardName.normalize('NFKC')}` : ''}` : 'PayPay history'} · {preview.fileName}
+          </p>
           <ul className="space-y-1">
             {months.map((month) => (
               <li key={month.usageMonth} className="text-[13px] text-ink-2">
@@ -374,17 +381,21 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
             months.map((month) => {
               const entered = statementIn(snapshot, card.id, month.usageMonth);
               if (month.billed === null) return null;
-              if (entered) {
-                return entered.amount === month.billed ? null : (
+              if (entered?.amount === month.billed) return null;
+              if (entered && !canReplaceBill(entered)) {
+                return (
                   <p key={month.usageMonth} className="text-xs leading-relaxed text-ink-3">
                     You entered {formatYen(entered.amount)} for this bill; the statement says {formatYen(month.billed)}. Tap the bill on Home to change it.
                   </p>
                 );
               }
+              const due = formatWeekdayDate(cardDueDate(card, month.usageMonth));
               return (
                 <label key={month.usageMonth} className="flex cursor-pointer items-start gap-2 text-[13px] text-ink-2">
                   <input type="checkbox" checked={useAsTotal} onChange={(event) => setUseAsTotal(event.target.checked)} className="mt-0.5 h-4 w-4 accent-[rgb(var(--accent))]" />
-                  Use {formatYen(month.billed)} as {card.name}'s bill due {formatWeekdayDate(cardDueDate(card, month.usageMonth))}
+                  {entered
+                    ? `Change ${card.name}'s bill due ${due} from ${formatYen(entered.amount)} to ${formatYen(month.billed)}`
+                    : `Use ${formatYen(month.billed)} as ${card.name}'s bill due ${due}`}
                 </label>
               );
             })
