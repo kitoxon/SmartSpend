@@ -6,6 +6,7 @@ import { formatWeekdayDate, todayLocalDate } from '../utils/jpCalendar';
 import { formatSignedYen, formatYen } from '../utils/format';
 import { localDateInputToIso } from '../utils/date';
 import { isBalanceAdjustment } from '../utils/transactions';
+import { minuteOfDay, summarizeNotes, usualPrice } from '../utils/quickEntry';
 import { CategoryIcon } from './ui/CategoryIcon';
 
 interface CashEntryProps {
@@ -21,14 +22,9 @@ const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0', 'back'] as
 const DAY_MS = 86_400_000;
 const MAX_NOTE_SUGGESTIONS = 8;
 
-const noteOf = (transaction: Transaction) => transaction.description.replace(/^\(Recurring\)\s*/i, '').trim();
-const sameNote = (a: string, b: string) => a.trim().toLocaleLowerCase() === b.trim().toLocaleLowerCase();
+const MAX_SHORTCUTS = 4;
 
-const median = (values: number[]) => {
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : Math.round((sorted[middle - 1] + sorted[middle]) / 2);
-};
+const sameNote = (a: string, b: string) => a.trim().toLocaleLowerCase() === b.trim().toLocaleLowerCase();
 
 export const CashEntry: React.FC<CashEntryProps> = ({ transactions, left, onSave, onLogIncome }) => {
   const recentExpenses = useMemo(() => {
@@ -44,44 +40,26 @@ export const CashEntry: React.FC<CashEntryProps> = ({ transactions, left, onSave
     return [...CASH_CATEGORIES].sort((a, b) => (counts.get(b) ?? 0) - (counts.get(a) ?? 0));
   }, [recentExpenses]);
 
-  const shortcuts = useMemo(() => {
-    const groups = new Map<string, { description: string; category: Category; amounts: number[] }>();
-    for (const transaction of recentExpenses) {
-      const description = noteOf(transaction);
-      if (!description) continue;
-      const key = `${transaction.category}|${description.toLocaleLowerCase()}`;
-      const group = groups.get(key) ?? { description, category: transaction.category, amounts: [] };
-      group.amounts.push(transaction.amount);
-      groups.set(key, group);
-    }
-    return [...groups.values()]
-      .filter((group) => group.amounts.length >= 2)
-      .sort((a, b) => b.amounts.length - a.amounts.length)
-      .slice(0, 4)
-      .map((group) => ({ ...group, amount: median(group.amounts) }));
-  }, [recentExpenses]);
+  // The pad opens fresh each time, so the time it opened is "now" for ordering suggestions.
+  const [openedAt] = useState(() => minuteOfDay(new Date()));
+  const noteUses = useMemo(() => summarizeNotes(recentExpenses, openedAt), [recentExpenses, openedAt]);
 
-  // Notes used before in each category, most used first (then most recent),
-  // so a note is usually a tap away instead of the phone keyboard.
+  // Fill in the amount too, but only for things that cost the same each time (a morning
+  // coffee). Lunch at a different price each day stays a note suggestion.
+  const shortcuts = useMemo(() => noteUses.flatMap((use) => {
+    const amount = usualPrice(use.amounts);
+    return amount === null ? [] : [{ description: use.note, category: use.category, amount }];
+  }).slice(0, MAX_SHORTCUTS), [noteUses]);
+
+  // Notes used before in each category, so a note is usually a tap away instead of the phone keyboard.
   const notesByCategory = useMemo(() => {
-    const groups = new Map<Category, Map<string, { note: string; count: number; last: number }>>();
-    for (const transaction of recentExpenses) {
-      const note = noteOf(transaction);
-      if (!note) continue;
-      const notes = groups.get(transaction.category) ?? new Map<string, { note: string; count: number; last: number }>();
-      groups.set(transaction.category, notes);
-      const key = note.toLocaleLowerCase();
-      const time = new Date(transaction.date).getTime();
-      const entry = notes.get(key) ?? { note, count: 0, last: 0 };
-      entry.count += 1;
-      if (time >= entry.last) Object.assign(entry, { note, last: time }); // The latest spelling
-      notes.set(key, entry);
+    const notes = new Map<Category, string[]>();
+    for (const use of noteUses) {
+      const list = notes.get(use.category) ?? [];
+      if (list.length < MAX_NOTE_SUGGESTIONS) notes.set(use.category, [...list, use.note]);
     }
-    return new Map([...groups].map(([group, notes]) => [
-      group,
-      [...notes.values()].sort((a, b) => b.count - a.count || b.last - a.last).slice(0, MAX_NOTE_SUGGESTIONS).map((entry) => entry.note),
-    ]));
-  }, [recentExpenses]);
+    return notes;
+  }, [noteUses]);
 
   const [digits, setDigits] = useState('');
   const [category, setCategory] = useState<Category>(orderedCategories[0] ?? Category.Food);
