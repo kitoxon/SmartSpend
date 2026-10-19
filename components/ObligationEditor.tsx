@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import { Bill, Debt, PlannerData } from '../types';
 import { Obligation, averageCardUsage, lastCardBill, monthlyInterest, scheduledPrincipal } from '../utils/payCycle';
 import { formatWeekdayDate } from '../utils/jpCalendar';
@@ -12,6 +13,7 @@ interface ObligationEditorProps {
   data: PlannerData;
   debts: Debt[];
   onSaveCard: (input: CardBillInput, paid: boolean) => Promise<void>;
+  onRemoveCard: () => Promise<void>;
   onSaveBill: (bill: Bill, dueDate: string, amount: number, paid: boolean) => Promise<void>;
   onPayDebt: (debtId: string) => void;
   onCancel: () => void;
@@ -24,7 +26,7 @@ const PaidToggle: React.FC<{ paid: boolean; onChange: (paid: boolean) => void }>
   </label>
 );
 
-export const ObligationEditor: React.FC<ObligationEditorProps> = ({ obligation, data, debts, onSaveCard, onSaveBill, onPayDebt, onCancel }) => {
+export const ObligationEditor: React.FC<ObligationEditorProps> = ({ obligation, data, debts, onSaveCard, onRemoveCard, onSaveBill, onPayDebt, onCancel }) => {
   const card = obligation.kind === 'card' ? data.cards.find((item) => item.id === obligation.refId) : undefined;
   const bill = obligation.kind === 'bill' ? data.bills.find((item) => item.id === obligation.refId) : undefined;
   const debt = obligation.kind === 'debt' ? debts.find((item) => item.id === obligation.refId) : undefined;
@@ -86,6 +88,19 @@ export const ObligationEditor: React.FC<ObligationEditorProps> = ({ obligation, 
     );
   }
 
+  const remove = async () => {
+    setError(null);
+    setSaving(true);
+    try {
+      await onRemoveCard();
+    } catch (removeError) {
+      setError(removeError instanceof Error ? removeError.message : 'Could not remove.');
+      setSaving(false);
+    }
+  };
+
+  // An entered bill that isn't paid can be taken back out, so the card goes back to an estimate.
+  const removable = card && obligation.statement && !obligation.statement.paidAt;
   const installment = card ? installmentDueOnBill(card, obligation.usageMonth!, debts, data.statements) : 0;
   const usual = card ? averageCardUsage(card.id, data.statements, obligation.usageMonth!) : null;
   const lastBill = card ? lastCardBill(card.id, data.statements, obligation.usageMonth!) : null;
@@ -113,6 +128,14 @@ export const ObligationEditor: React.FC<ObligationEditorProps> = ({ obligation, 
         </div>
       )}
       <PaidToggle paid={paid} onChange={setPaid} />
+      {removable && (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs leading-relaxed text-ink-3">Not the real bill yet? Remove it to go back to an estimate from purchases so far.</p>
+          <button type="button" onClick={() => void remove()} disabled={saving} className="btn-ghost -mr-2 shrink-0 text-bad hover:bg-bad-soft hover:text-bad">
+            <Trash2 size={14} /> Remove bill
+          </button>
+        </div>
+      )}
       {error && <p className="text-xs text-bad">{error}</p>}
       <div className="flex gap-2">
         <button type="button" onClick={onCancel} className="btn flex-1">Cancel</button>

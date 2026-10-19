@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowRight, Pencil } from 'lucide-react';
+import { ArrowRight, ChevronRight, Pencil } from 'lucide-react';
 import { Card, CardBreakdown, CardStatement, CardUsage, Debt, PlannerData } from '../types';
 import {
   averageCardUsage, cardDueDate, cycleForDate, getCycle, monthlyInterest, projectCardUsage, scheduledPrincipal, statementPurchases, unusuallyHighBy, usageMonthsDueIn,
@@ -20,6 +20,7 @@ interface CardsViewProps {
   onDeleteBreakdown: (breakdown: CardBreakdown) => Promise<void>;
   onOpenSetup: () => void;
   onOpenDebts: () => void;
+  onEditBill: (card: Card, usageMonth: string) => void;
 }
 
 // Fixed series order; Tailwind needs the full class names written out.
@@ -88,7 +89,8 @@ const UsageRow: React.FC<{
   data: PlannerData;
   today: LocalDate;
   onSave: (amount: number) => Promise<void>;
-}> = ({ card, index, month, closed, data, today, onSave }) => {
+  onEditBill: () => void;
+}> = ({ card, index, month, closed, data, today, onSave, onEditBill }) => {
   const statement = data.statements.find((item) => item.cardId === card.id && item.usageMonth === month);
   const usage = data.cardUsage.find((item) => item.cardId === card.id && item.usageMonth === month);
   const average = averageCardUsage(card.id, data.statements, month);
@@ -112,12 +114,17 @@ const UsageRow: React.FC<{
     <span className="flex min-w-0 items-center gap-2 text-sm text-ink"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${seriesClass(index)}`} /><span className="truncate">{card.name}</span></span>
   );
 
-  // Once the bill is entered at check-in, it replaces any typed total.
+  // Once the bill is entered (at check-in, on Home or from an import), it replaces any typed total.
   if (statement) {
     return (
-      <li className="flex items-center justify-between gap-3 py-3">
-        {name}
-        <span className="shrink-0 text-right text-[13px]"><span className="tabular-nums text-ink">{formatYen(statement.amount)}</span> <span className="text-ink-3">bill entered</span></span>
+      <li>
+        <button type="button" onClick={onEditBill} className="-mx-2 flex w-[calc(100%+1rem)] items-center justify-between gap-3 rounded-lg px-2 py-3 text-left transition hover:bg-subtle">
+          {name}
+          <span className="flex shrink-0 items-center gap-1 text-right text-[13px]">
+            <span className="tabular-nums text-ink">{formatYen(statement.amount)}</span> <span className="text-ink-3">bill {statement.paidAt ? 'paid' : 'entered'}</span>
+            <ChevronRight size={14} className="text-ink-3" aria-hidden="true" />
+          </span>
+        </button>
       </li>
     );
   }
@@ -169,7 +176,7 @@ const UsageRow: React.FC<{
 };
 
 export const CardsView: React.FC<CardsViewProps> = ({
-  data, debts, today, latestSalary, onSaveUsage, onImportBreakdowns, onDeleteBreakdown, onOpenSetup, onOpenDebts,
+  data, debts, today, latestSalary, onSaveUsage, onImportBreakdowns, onDeleteBreakdown, onOpenSetup, onOpenDebts, onEditBill,
 }) => {
   const cards = useMemo(() => data.cards.filter((card) => !card.archived), [data.cards]);
   const month = monthKeyOf(today);
@@ -237,7 +244,7 @@ export const CardsView: React.FC<CardsViewProps> = ({
                 </p>
                 <ul className="mt-1 divide-y divide-line">
                   {cards.map((card, index) => (
-                    <UsageRow key={card.id} card={card} index={index} month={usageMonth} closed={closed} data={data} today={today} onSave={(amount) => onSaveUsage(card, usageMonth, amount)} />
+                    <UsageRow key={card.id} card={card} index={index} month={usageMonth} closed={closed} data={data} today={today} onSave={(amount) => onSaveUsage(card, usageMonth, amount)} onEditBill={() => onEditBill(card, usageMonth)} />
                   ))}
                 </ul>
                 <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-3 border-t border-line pt-3 text-sm">

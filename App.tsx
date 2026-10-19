@@ -18,8 +18,8 @@ import {
   CardBillInput, SETTINGS_RECORD_ID, buildCardBill, installmentDueOnBill, isPlannerConfigured, markCardBillPaid, toPlannerData, unmarkCardBillPaid,
 } from './services/planner';
 import {
-  Obligation, PayCycle, billPaymentId, buildCyclePlan, cardDueDate, cardUsageId, cycleForDate, cycleRecordId, getCycle, monthlyInterest, statementId,
-  suggestedCarryover,
+  Obligation, PayCycle, billPaymentId, buildCyclePlan, cardDueDate, cardUsageId, cycleForDate, cycleRecordId, enteredCardBill, getCycle, monthlyInterest,
+  statementId, suggestedCarryover,
 } from './utils/payCycle';
 import { monthsBetween, shiftMonthKey, todayLocalDate } from './utils/jpCalendar';
 import { BALANCE_ADJUSTMENT_NOTE, withCurrentCategory } from './utils/transactions';
@@ -287,6 +287,19 @@ const App: React.FC = () => {
     if (splitDebt) await putDebt(splitDebt);
     if (removedSplitDebtId) await dropDebt(removedSplitDebtId);
     await setCardBillPaid(statement, paid ?? Boolean(existing?.paidAt));
+  };
+
+  /** Takes an unpaid card bill back out, with the installment debt it split off, so the card is estimated again. */
+  const removeCardBill = async (card: Card, usageMonth: string) => {
+    const statement = toPlannerData(recordsRef.current).statements.find((item) => item.id === statementId(card.id, usageMonth));
+    if (!statement || statement.paidAt) return;
+    if (statement.splitDebtId) await dropDebt(statement.splitDebtId);
+    await dropPlanner(statement.id);
+  };
+
+  const openCardBill = (card: Card, usageMonth: string) => {
+    const statement = plannerData.statements.find((item) => item.id === statementId(card.id, usageMonth));
+    if (statement) setEditingObligation(enteredCardBill(card, usageMonth, statement, plannerData.statements));
   };
 
   const saveBillPayment = async (bill: Bill, dueDate: string, patch: Partial<BillPayment>) => {
@@ -746,6 +759,7 @@ const App: React.FC = () => {
               onDeleteBreakdown={handleDeleteBreakdown}
               onOpenSetup={() => setIsSetupOpen(true)}
               onOpenDebts={() => setCurrentView('debts')}
+              onEditBill={openCardBill}
             />
           )}
           {currentView === 'history' && (
@@ -859,6 +873,11 @@ const App: React.FC = () => {
             data={plannerData}
             debts={debts}
             onSaveCard={async (input, paid) => { await saveCardBill(input, paid); setEditingObligation(null); }}
+            onRemoveCard={async () => {
+              const card = plannerData.cards.find((item) => item.id === editingObligation.refId);
+              if (card && editingObligation.usageMonth) await removeCardBill(card, editingObligation.usageMonth);
+              setEditingObligation(null);
+            }}
             onSaveBill={async (bill, dueDate, amount, paid) => {
               await saveBillPayment(bill, dueDate, { amount, confirmed: true, paidAt: paid ? editingObligation.billPayment?.paidAt ?? new Date().toISOString() : undefined });
               setEditingObligation(null);

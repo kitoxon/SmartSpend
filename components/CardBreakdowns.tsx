@@ -155,7 +155,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
     const bills: ImportedBill[] = preview.kind === 'vpass' && useAsTotal ? months.flatMap((month) => {
       const entered = statementIn(snapshot, card.id, month.usageMonth);
       const saves = !entered || (entered.amount !== month.billed && canReplaceBill(entered));
-      return month.billed !== null && saves ? [{ card, usageMonth: month.usageMonth, amount: month.billed }] : [];
+      return month.billed !== null && month.usageMonth < currentMonth && saves ? [{ card, usageMonth: month.usageMonth, amount: month.billed }] : [];
     }) : [];
     const usages: CardUsage[] = preview.kind === 'paypay' && useAsTotal ? months.flatMap((month) => {
       const typed = snapshot.cardUsage.find((item) => item.cardId === card.id && item.usageMonth === month.usageMonth);
@@ -225,17 +225,19 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
 
   const renderBreakdown = (breakdown: CardBreakdown, titled: boolean) => {
     const isStatement = breakdown.source === 'vpass';
+    // Before the month ends there's no bill yet: a statement's payment and an entered bill are both provisional.
+    const inProgress = breakdown.usageMonth >= currentMonth;
     const statement = statementIn(data, breakdown.cardId, breakdown.usageMonth);
     // Without an entered bill, a total typed after the month ended is the bill.
     const finalTotal = data.cardUsage.find((item) => item.cardId === breakdown.cardId && item.usageMonth === breakdown.usageMonth && item.asOf > dayOfMonth(item.usageMonth, 'last'));
-    const billPurchases = statement ? statementPurchases(statement) : finalTotal?.amount ?? null;
+    const billPurchases = inProgress ? null : statement ? statementPurchases(statement) : finalTotal?.amount ?? null;
     const billLabel = statement ? 'bill' : 'total you entered';
     // A PayPay history misses what the bill has from outside the app (ETC
     // tolls, using the card directly), or runs over when late payments move
     // to next month. A statement already is the bill.
     const notInHistory = !isStatement && billPurchases !== null ? billPurchases - breakdown.charged : 0;
     // On revolving payment, purchases not in this bill carry over with interest.
-    const carriedOver = isStatement && breakdown.billed !== undefined ? breakdown.charged - breakdown.billed : 0;
+    const carriedOver = isStatement && !inProgress && breakdown.billed !== undefined ? breakdown.charged - breakdown.billed : 0;
     const largest = Math.max(...breakdown.categories.map((category) => category.amount), notInHistory, 1);
     const categories = breakdown.categories.map((category) => ({ ...category, label: currentCategoryName(category.label) }));
     const top = categories[0];
@@ -248,7 +250,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
             <p className={`${titled ? 'mt-0.5' : 'pt-2'} text-xs leading-relaxed text-ink-3`}>
               {isStatement ? 'Vpass statement' : 'PayPay history'}, {formatShortDate(breakdown.firstDate)}–{formatShortDate(breakdown.lastDate)}:{' '}
               {breakdown.payments} {isStatement ? 'purchases' : 'payments'}, {formatYen(breakdown.charged)}{isStatement ? '' : ' on the card'}
-              {isStatement && breakdown.billed !== undefined && ` · bill ${formatYen(breakdown.billed)}`}
+              {isStatement && !inProgress && breakdown.billed !== undefined && ` · bill ${formatYen(breakdown.billed)}`}
               {!isStatement && billPurchases ? ` · ${Math.min(100, Math.round((breakdown.charged / billPurchases) * 100))}% of the ${formatYen(billPurchases)} ${billLabel}` : ''}
             </p>
           </div>
@@ -267,7 +269,10 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
             The bill is {formatYen(carriedOver)} more than these purchases: an earlier revolving balance or interest.
           </p>
         )}
-        {isStatement && breakdown.revolving && Math.abs(carriedOver) < 1 && (
+        {isStatement && inProgress && (
+          <p className="mt-3 text-xs leading-relaxed text-ink-3">{formatMonthName(breakdown.usageMonth)} isn't over yet, so this is a preview. Import the statement again once the bill is finalized.</p>
+        )}
+        {isStatement && !inProgress && breakdown.revolving && Math.abs(carriedOver) < 1 && (
           <p className="mt-3 text-xs leading-relaxed text-ink-3">These purchases are set to リボ払い (revolving), and this bill pays all of them.</p>
         )}
 
@@ -357,7 +362,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
                 <span className="text-ink">{monthLabel(month.usageMonth)}</span> · {month.payments} {preview.kind === 'vpass' ? 'purchases' : 'payments'} ·{' '}
                 <span className="tabular-nums text-ink">{formatYen(month.charged)}</span>{preview.kind === 'paypay' ? ' on the card' : ''}
                 {month.paidOtherWays > 0 && ` · ${formatYen(month.paidOtherWays)} with points or balance`}
-                {month.billed !== null && <> · bill <span className="tabular-nums text-ink">{formatYen(month.billed)}</span></>}
+                {month.billed !== null && month.usageMonth < currentMonth && <> · bill <span className="tabular-nums text-ink">{formatYen(month.billed)}</span></>}
               </li>
             ))}
           </ul>
@@ -381,6 +386,14 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
             months.map((month) => {
               const entered = statementIn(snapshot, card.id, month.usageMonth);
               if (month.billed === null) return null;
+              // Until the month ends, the statement is a preview and its payment isn't the bill.
+              if (month.usageMonth >= currentMonth) {
+                return (
+                  <p key={month.usageMonth} className="text-xs leading-relaxed text-ink-3">
+                    {formatMonthName(month.usageMonth)} isn't over yet, so this statement isn't final. Import it again once the bill is finalized to save the bill.
+                  </p>
+                );
+              }
               if (entered?.amount === month.billed) return null;
               if (entered && !canReplaceBill(entered)) {
                 return (

@@ -178,6 +178,14 @@ const localDateOfTransaction = (transaction: Transaction) => {
   return Number.isNaN(date.getTime()) ? null : fromDate(date);
 };
 
+/** A card bill that has been entered, as an obligation (Home's rows, and the bill editor). */
+export const enteredCardBill = (card: Card, usageMonth: string, statement: CardStatement, statements: CardStatement[]): Obligation => ({
+  key: `card:${card.id}:${usageMonth}`, kind: 'card', refId: card.id, label: card.name, dueDate: cardDueDate(card, usageMonth),
+  amount: statement.amount - statement.splitAmount, estimated: false, needsAmount: false,
+  paid: Boolean(statement.paidAt), usageMonth, statement, usual: averageCardUsage(card.id, statements, usageMonth),
+  installment: statement.installment, splitAmount: statement.splitAmount,
+});
+
 const cardObligations = (cycle: PayCycle, countFrom: LocalDate, isPast: boolean, input: PlanInput): Obligation[] => {
   const { cards, statements } = input.data;
   const obligations: Obligation[] = [];
@@ -188,12 +196,7 @@ const cardObligations = (cycle: PayCycle, countFrom: LocalDate, isPast: boolean,
       if (dueDate < countFrom) continue;
       const statement = statements.find((item) => item.cardId === card.id && item.usageMonth === usageMonth);
       if (statement) {
-        obligations.push({
-          key: `card:${card.id}:${usageMonth}`, kind: 'card', refId: card.id, label: card.name, dueDate,
-          amount: statement.amount - statement.splitAmount, estimated: false, needsAmount: false,
-          paid: Boolean(statement.paidAt), usageMonth, statement, usual: averageCardUsage(card.id, statements, usageMonth),
-          installment: statement.installment, splitAmount: statement.splitAmount,
-        });
+        obligations.push(enteredCardBill(card, usageMonth, statement, statements));
         continue;
       }
       // Split debts only exist from now on, so they cannot explain an old bill.
