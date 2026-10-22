@@ -154,6 +154,13 @@ export const CycleHome: React.FC<CycleHomeProps> = ({
 
   // Before a salary is known, a "free" figure would just be minus the bills.
   const salaryUnknown = !confirmed && plan.salary === 0;
+  // What still has to leave the account this cycle; "about" while an unpaid amount is an estimate.
+  const unpaid = plan.obligations.filter((obligation) => !obligation.paid);
+  const unpaidTotal = unpaid.reduce((sum, obligation) => sum + obligation.amount, 0);
+  const paidCount = plan.obligations.length - unpaid.length;
+  const billsProgress = unpaid.length === 0
+    ? 'All paid'
+    : `${unpaid.some((obligation) => obligation.estimated) ? 'About ' : ''}${formatYen(unpaidTotal)} still to pay · ${paidCount} of ${plan.obligations.length} paid`;
   const heroLabel = salaryUnknown ? 'Bills this cycle' : status === 'past' ? 'Left at the end' : status === 'future' ? 'Free next cycle' : 'Left to spend';
   const heroNote = salaryUnknown
     ? `Salary is added at check-in on ${formatWeekdayDate(cycle.payday)}`
@@ -271,15 +278,19 @@ export const CycleHome: React.FC<CycleHomeProps> = ({
               )}
               {plan.otherIncome > 0 && <Row label="Other income" value={`+${formatYen(plan.otherIncome)}`} muted />}
               {plan.savings > 0 && <Row label="Set aside for savings" value={`−${formatYen(plan.savings)}`} muted />}
-              <div className="my-1">
+              {plan.obligations.length > 0 && (
+                <div className="mt-1 border-t border-line pt-2">
+                  <Row label="Bills this cycle" value={`−${formatYen(plan.obligationsTotal)}`} />
+                  <p className="-mt-1 pb-1 text-xs text-ink-3">{billsProgress}</p>
+                </div>
+              )}
+              <div className="mb-1">
                 {plan.obligations.map((obligation) => (
                   <ObligationRow key={obligation.key} obligation={obligation} trackOverdue={status === 'current'} onTogglePaid={onTogglePaid} onEdit={onEditObligation} />
                 ))}
               </div>
               <div className="mt-1 border-t border-line pt-1">
-                {salaryUnknown
-                  ? <Row label="Bills this cycle" value={`−${formatYen(plan.obligationsTotal)}`} strong />
-                  : <Row label="Free this cycle" value={formatSignedYen(plan.free)} strong />}
+                {!salaryUnknown && <Row label="Free this cycle" value={formatSignedYen(plan.free)} strong />}
                 <button type="button" onClick={onOpenActivity} className="flex w-full items-center justify-between gap-3 py-1.5 text-sm text-ink-2 transition hover:text-ink">
                   <span className="flex items-center gap-1">Cash spent so far <ArrowRight size={13} /></span>
                   <span className="tabular-nums">{plan.cashSpent > 0 ? '−' : ''}{formatYen(plan.cashSpent)}</span>
