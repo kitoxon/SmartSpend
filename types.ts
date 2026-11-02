@@ -83,6 +83,8 @@ export interface PlannerSettings {
   defaultSavingsGoalId?: string;
   // Whether money set aside stays in the spending account (true) or is moved out.
   savingsInAccount?: boolean;
+  // "Can I afford this?" keeps at least this much to spend in each cycle.
+  cushion?: number;
 }
 
 export interface Card {

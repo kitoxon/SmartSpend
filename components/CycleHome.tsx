@@ -16,6 +16,7 @@ interface CycleHomeProps {
   nextPlan: CyclePlan;
   isConfigured: boolean;
   onCheckBalance: () => void;
+  onCheckAfford: () => void;
   onOpenCards: () => void;
   onShiftCycle: (delta: number) => void;
   onToday: () => void;
@@ -130,7 +131,7 @@ const NextCycleCard: React.FC<{ plan: CyclePlan; onOpenCards: () => void }> = ({
 };
 
 export const CycleHome: React.FC<CycleHomeProps> = ({
-  plan, nextPlan, isConfigured, onCheckBalance, onOpenCards, onShiftCycle, onToday, onSetup, onCheckIn, onTogglePaid, onEditObligation, onAddCash, onOpenActivity, onEditTransaction,
+  plan, nextPlan, isConfigured, onCheckBalance, onCheckAfford, onOpenCards, onShiftCycle, onToday, onSetup, onCheckIn, onTogglePaid, onEditObligation, onAddCash, onOpenActivity, onEditTransaction,
 }) => {
   const { cycle, record, status } = plan;
   const today = todayLocalDate();
@@ -156,11 +157,10 @@ export const CycleHome: React.FC<CycleHomeProps> = ({
   const salaryUnknown = !confirmed && plan.salary === 0;
   // What still has to leave the account this cycle; "about" while an unpaid amount is an estimate.
   const unpaid = plan.obligations.filter((obligation) => !obligation.paid);
-  const unpaidTotal = unpaid.reduce((sum, obligation) => sum + obligation.amount, 0);
   const paidCount = plan.obligations.length - unpaid.length;
   const billsProgress = unpaid.length === 0
     ? 'All paid'
-    : `${unpaid.some((obligation) => obligation.estimated) ? 'About ' : ''}${formatYen(unpaidTotal)} still to pay · ${paidCount} of ${plan.obligations.length} paid`;
+    : `${unpaid.some((obligation) => obligation.estimated) ? 'About ' : ''}${formatYen(plan.unpaidTotal)} still to pay · ${paidCount} of ${plan.obligations.length} paid`;
   const heroLabel = salaryUnknown ? 'Bills this cycle' : status === 'past' ? 'Left at the end' : status === 'future' ? 'Free next cycle' : 'Left to spend';
   const heroNote = salaryUnknown
     ? `Salary is added at check-in on ${formatWeekdayDate(cycle.payday)}`
@@ -296,10 +296,16 @@ export const CycleHome: React.FC<CycleHomeProps> = ({
                   <span className="tabular-nums">{plan.cashSpent > 0 ? '−' : ''}{formatYen(plan.cashSpent)}</span>
                 </button>
                 {isLive && (
-                  <button type="button" onClick={onCheckBalance} className="mt-1 flex w-full items-center justify-between gap-3 rounded-lg bg-subtle px-3 py-2 text-left text-[13px] text-ink-2 transition hover:text-ink">
-                    <span>Does this match your bank balance?</span>
-                    <span className="flex shrink-0 items-center gap-1 text-ink">Check <ArrowRight size={13} /></span>
-                  </button>
+                  <>
+                    <button type="button" onClick={onCheckAfford} className="mt-1 flex w-full items-center justify-between gap-3 rounded-lg bg-subtle px-3 py-2 text-left text-[13px] text-ink-2 transition hover:text-ink">
+                      <span>Thinking of buying something?</span>
+                      <span className="flex shrink-0 items-center gap-1 text-ink">Can I afford it <ArrowRight size={13} /></span>
+                    </button>
+                    <button type="button" onClick={onCheckBalance} className="mt-1 flex w-full items-center justify-between gap-3 rounded-lg bg-subtle px-3 py-2 text-left text-[13px] text-ink-2 transition hover:text-ink">
+                      <span>Does this match your bank balance?</span>
+                      <span className="flex shrink-0 items-center gap-1 text-ink">Check <ArrowRight size={13} /></span>
+                    </button>
+                  </>
                 )}
               </div>
             </div>

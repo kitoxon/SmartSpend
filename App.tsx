@@ -38,6 +38,7 @@ import { DebtForm } from './components/DebtForm';
 import { GoalForm } from './components/GoalForm';
 import { SettingsPanel } from './components/SettingsPanel';
 import { BalanceCheck } from './components/BalanceCheck';
+import { AffordCheck } from './components/AffordCheck';
 import type { ImportedBill } from './components/CardBreakdowns';
 import { Modal } from './components/ui/Modal';
 import { AmountInput } from './components/ui/AmountInput';
@@ -105,6 +106,7 @@ const App: React.FC = () => {
   const [checkinMode, setCheckinMode] = useState<'payday' | 'today' | null>(null);
   const [editingObligation, setEditingObligation] = useState<Obligation | null>(null);
   const [isBalanceOpen, setIsBalanceOpen] = useState(false);
+  const [isAffordOpen, setIsAffordOpen] = useState(false);
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
   const [transactionPrefill, setTransactionPrefill] = useState<TransactionPrefill | null>(null);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
@@ -733,6 +735,7 @@ const App: React.FC = () => {
               nextPlan={nextPlan}
               isConfigured={isConfigured}
               onCheckBalance={() => setIsBalanceOpen(true)}
+              onCheckAfford={() => setIsAffordOpen(true)}
               onOpenCards={() => setCurrentView('cards')}
               onShiftCycle={(delta) => setCycleOffset((offset) => offset + delta)}
               onToday={() => setCycleOffset(0)}
@@ -850,6 +853,19 @@ const App: React.FC = () => {
             suggestedCarryover={suggestedCarryover(currentCycle, planInput, settings)}
             onSubmit={handleCheckin}
             onCancel={() => setCheckinMode(null)}
+          />
+        )}
+      </Modal>
+
+      <Modal isOpen={isAffordOpen} onClose={() => setIsAffordOpen(false)} title="Can I afford it?">
+        {isAffordOpen && (
+          <AffordCheck
+            cards={plannerData.cards.filter((card) => !card.archived).sort((a, b) => a.sortOrder - b.sortOrder)}
+            planInput={planInput}
+            settings={settings}
+            currentKey={currentCycle.key}
+            salaryEstimate={latestSalary ?? 0}
+            onSaveCushion={(amount) => putPlanner('settings', SETTINGS_RECORD_ID, { ...settings, cushion: amount })}
           />
         )}
       </Modal>
