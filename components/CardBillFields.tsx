@@ -4,7 +4,8 @@ import { formatWeekdayDate } from '../utils/jpCalendar';
 import { formatMonthName, formatYen, parseAmount } from '../utils/format';
 import { unusuallyHighBy } from '../utils/payCycle';
 import { AmountInput } from './ui/AmountInput';
-import { CardSplitInput, installmentDueOnBill } from '../services/planner';
+import { CardSplitInput, firstSplitInstallment, installmentDueOnBill } from '../services/planner';
+import { Segmented } from './ui/Segmented';
 
 export interface CardBillValue {
   amount: string;
@@ -13,18 +14,20 @@ export interface CardBillValue {
   splitAmount: string;
   months: number;
   rate: string;
+  splitStartsNow: boolean; // First installment with this bill, not the next
 }
 
 export const SPLIT_MONTH_OPTIONS = [3, 5, 6, 10, 12];
 export const DEFAULT_SPLIT_RATE = '15';
 
-export const emptyCardBillValue = (amount: number | null, installment: number, split?: { amount: number; months: number; rate: number }): CardBillValue => ({
+export const emptyCardBillValue = (amount: number | null, installment: number, split?: Omit<CardSplitInput, 'startsThisBill'> & { startsThisBill?: boolean }): CardBillValue => ({
   amount: amount === null ? '' : String(amount),
   installment: installment > 0 ? String(installment) : '',
   splitOn: Boolean(split),
   splitAmount: split ? String(split.amount) : '',
   months: split?.months ?? 3,
   rate: split ? String(split.rate) : DEFAULT_SPLIT_RATE,
+  splitStartsNow: split?.startsThisBill ?? false,
 });
 
 /** Form state for a card bill: the saved statement if there is one, otherwise blank with installments due. */
@@ -35,6 +38,7 @@ export const cardBillValueFor = (card: Card, usageMonth: string, statement: Card
     amount: statement.splitAmount,
     months: Math.max(1, Math.round(statement.splitAmount / (splitDebt.minimumPayment || statement.splitAmount))),
     rate: splitDebt.interestRate ?? 0,
+    startsThisBill: Boolean(statement.splitFirstPayment),
   } : undefined);
 };
 
@@ -43,7 +47,7 @@ export const readSplit = (value: CardBillValue): CardSplitInput | null => {
   const amount = parseAmount(value.splitAmount);
   const rate = Number(value.rate);
   if (!amount) return null;
-  return { amount, months: value.months, rate: Number.isFinite(rate) && rate >= 0 ? rate : 0 };
+  return { amount, months: value.months, rate: Number.isFinite(rate) && rate >= 0 ? rate : 0, startsThisBill: value.splitStartsNow };
 };
 
 /**
@@ -141,9 +145,21 @@ export const CardBillFields: React.FC<CardBillFieldsProps> = ({ card, usageMonth
               ))}
             </div>
           </div>
+          <div className="space-y-1.5">
+            <p className="field-label mb-0">First payment</p>
+            <Segmented
+              label="First payment"
+              value={value.splitStartsNow ? 'this' : 'next'}
+              options={[{ value: 'this', label: 'This bill' }, { value: 'next', label: 'Next bill' }]}
+              onChange={(next) => set({ splitStartsNow: next === 'this' })}
+            />
+          </div>
           {split && amount !== null && split.amount < amount && (
             <p className="text-xs leading-relaxed text-ink-2">
-              Pay {formatYen(amount - split.amount)} now. About {formatYen(splitMonthly)} a month is added to the next {split.months} {card.name} bills.
+              {split.startsThisBill
+                ? `Pay ${formatYen(amount - split.amount + firstSplitInstallment(split))} now: ${formatYen(amount - split.amount)} plus the first of ${split.months} payments. About ${formatYen(splitMonthly)} a month is added to the next ${split.months - 1} ${card.name} bills.`
+                : `Pay ${formatYen(amount - split.amount)} now. About ${formatYen(splitMonthly)} a month is added to the next ${split.months} ${card.name} bills.`}
+              {' '}When you apply in the card app, it shows which bill the first payment is on.
             </p>
           )}
         </div>

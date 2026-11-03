@@ -47,7 +47,17 @@ export interface CardSplitInput {
   amount: number;
   months: number;
   rate: number; // Annual %
+  // The first installment is paid with this same bill (SMBC's あとから分割 usually works
+  // this way) instead of the next one.
+  startsThisBill: boolean;
 }
+
+/** What a split adds back to the bill it's made on: the first installment, when it starts there. */
+export const firstSplitInstallment = (split: CardSplitInput | null) => {
+  if (!split?.startsThisBill || split.amount <= 0) return 0;
+  const months = Math.max(1, Math.round(split.months));
+  return Math.min(split.amount, Math.ceil(split.amount / months)) + Math.round((split.amount * split.rate) / 100 / 12);
+};
 
 export interface CardBillInput {
   card: Card;
@@ -65,7 +75,8 @@ export const installmentDueOnBill = (card: Card, usageMonth: string, debts: Debt
 
 /**
  * Records to write for one card bill. A split moves part of the bill into an
- * installment debt whose payments are added to the card's following bills.
+ * installment debt whose payments are added to the card's bills: from the
+ * next bill, or from this one when `startsThisBill`.
  */
 export const buildCardBill = (input: CardBillInput, existing: CardStatement | undefined, debts: Debt[]) => {
   const { card, usageMonth, amount, installment, split } = input;
@@ -74,13 +85,15 @@ export const buildCardBill = (input: CardBillInput, existing: CardStatement | un
   let splitDebt: Debt | null = null;
   if (split && split.amount > 0) {
     const months = Math.max(1, Math.round(split.months));
-    splitDebt = {
+    // Saving the bill again with the same split keeps the debt, and any installments already paid on it.
+    const unchanged = previousSplit && existing?.splitAmount === split.amount && previousSplit.interestRate === split.rate
+      && previousSplit.minimumPayment === Math.ceil(split.amount / months) && Boolean(existing?.splitFirstPayment) === split.startsThisBill;
+    splitDebt = unchanged ? previousSplit : {
       id: previousSplit?.id ?? crypto.randomUUID(),
       person: `${card.name} split`,
       description: `${months} payments from the ${formatMonthName(usageMonth)} bill`,
       amount: split.amount,
-      // The first installment is collected with the next bill.
-      dueDate: toDate(cardDueDate(card, shiftMonthKey(usageMonth, 1))).toISOString(),
+      dueDate: toDate(cardDueDate(card, split.startsThisBill ? usageMonth : shiftMonthKey(usageMonth, 1))).toISOString(),
       type: 'payable',
       debtCategory: 'Credit Card',
       isPaid: false,
@@ -89,6 +102,7 @@ export const buildCardBill = (input: CardBillInput, existing: CardStatement | un
       cardId: card.id,
     };
   }
+  const firstPayment = splitDebt ? firstSplitInstallment(split) : 0;
 
   const statement: CardStatement = {
     ...existing,
@@ -97,18 +111,21 @@ export const buildCardBill = (input: CardBillInput, existing: CardStatement | un
     usageMonth,
     amount,
     installment: Math.min(installment, amount),
-    splitAmount: splitDebt ? Math.min(splitDebt.amount, amount) : 0,
+    splitAmount: splitDebt ? Math.min(split!.amount, amount) : 0,
     splitDebtId: splitDebt?.id,
+    splitFirstPayment: firstPayment > 0 ? firstPayment : undefined,
   };
 
   return { statement, splitDebt, removedSplitDebtId: previousSplit && !splitDebt ? previousSplit.id : null };
 };
 
-/** Paying a card bill also pays the installments it collects on the card's split debts. */
+/**
+ * Paying a card bill also pays the installments it collects on the card's
+ * split debts, and the first installment of its own split when it starts here.
+ */
 export const markCardBillPaid = (statement: CardStatement, debts: Debt[], billDueDate: string) => {
-  const linked = statement.installment > 0
-    ? installmentDebtsFor(statement.cardId, debts, billDueDate).filter((debt) => debt.id !== statement.splitDebtId)
-    : [];
+  const linked = installmentDebtsFor(statement.cardId, debts, billDueDate)
+    .filter((debt) => (debt.id === statement.splitDebtId ? Boolean(statement.splitFirstPayment) : statement.installment > 0));
   const appliedPayments = linked.map((debt) => ({ debtId: debt.id, principal: scheduledPrincipal(debt), previousDueDate: debt.dueDate }));
   const updatedDebts = linked.map((debt, index) => {
     const amount = Math.max(0, debt.amount - appliedPayments[index].principal);

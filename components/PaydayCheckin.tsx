@@ -3,7 +3,7 @@ import { Bill, Card, Category, Debt, Goal, PlannerData } from '../types';
 import { CyclePlan, averageCardUsage, lastCardBill } from '../utils/payCycle';
 import { formatShortDate, formatWeekdayDate, fromDate, todayLocalDate } from '../utils/jpCalendar';
 import { formatSignedYen, formatYen, parseAmount } from '../utils/format';
-import { CardBillInput, installmentDueOnBill } from '../services/planner';
+import { CardBillInput, firstSplitInstallment, installmentDueOnBill } from '../services/planner';
 import { AmountInput } from './ui/AmountInput';
 import { CardBillFields, CardBillValue, cardBillError, cardBillValueFor, readSplit } from './CardBillFields';
 import { APP_NAME } from '../constants';
@@ -76,7 +76,8 @@ export const PaydayCheckin: React.FC<PaydayCheckinProps> = ({ mode, plan, data, 
     const value = cardValues[item.key];
     const amount = parseAmount(value.amount);
     if (amount === null) return sum + item.amount;
-    return sum + amount - (readSplit(value)?.amount ?? 0);
+    const split = readSplit(value);
+    return sum + amount - (split?.amount ?? 0) + firstSplitInstallment(split);
   }, 0);
   const billTotal = billItems.reduce((sum, item) => sum + (parseAmount(billValues[item.key] ?? '') ?? 0), 0);
   const debtTotal = debtItems.reduce((sum, item) => sum + item.amount, 0);

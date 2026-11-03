@@ -103,6 +103,7 @@ export interface CardStatement {
   installment: number; // Part of `amount` that repays split debts on this card
   splitAmount: number; // Part of `amount` moved into a new installment debt
   splitDebtId?: string;
+  splitFirstPayment?: number; // The split's first installment, when this same bill pays it
   paidAt?: string;
   // Principal taken off linked debts when this bill was marked paid, so that
   // un-marking it can restore their balances exactly.

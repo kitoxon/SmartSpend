@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Card, CardStatement, Debt } from '../types';
+import { fromDate } from '../utils/jpCalendar';
 import { buildCardBill, markCardBillPaid, unmarkCardBillPaid } from './planner';
 
 const card: Card = { id: 'amazon', name: 'Amazon Mastercard', paymentDay: 26, sortOrder: 0 };
@@ -7,7 +8,7 @@ const card: Card = { id: 'amazon', name: 'Amazon Mastercard', paymentDay: 26, so
 describe('card bills', () => {
   it('moves part of a bill into an installment debt paid with the next bills', () => {
     const { statement, splitDebt } = buildCardBill(
-      { card, usageMonth: '2026-09', amount: 120_000, installment: 0, split: { amount: 60_000, months: 3, rate: 15 } },
+      { card, usageMonth: '2026-09', amount: 120_000, installment: 0, split: { amount: 60_000, months: 3, rate: 15, startsThisBill: false } },
       undefined,
       [],
     );
@@ -18,8 +19,31 @@ describe('card bills', () => {
     expect(new Date(splitDebt!.dueDate).getMonth()).toBe(10);
   });
 
+  it('can start the split on this same bill, which then pays its first installment', () => {
+    const { statement, splitDebt } = buildCardBill(
+      { card, usageMonth: '2026-10', amount: 61_000, installment: 0, split: { amount: 31_000, months: 3, rate: 15, startsThisBill: true } },
+      undefined,
+      [],
+    );
+    // 31,000 over 3: 10,334 of principal plus 388 interest on the full balance.
+    expect(statement).toMatchObject({ amount: 61_000, splitAmount: 31_000, splitFirstPayment: 10_722 });
+    expect(fromDate(new Date(splitDebt!.dueDate))).toBe('2026-11-26'); // This bill, not December's
+
+    const paid = markCardBillPaid(statement, [splitDebt!], '2026-11-26');
+    expect(paid.updatedDebts[0]).toMatchObject({ id: splitDebt!.id, amount: 20_666 });
+    expect(fromDate(new Date(paid.updatedDebts[0].dueDate))).toBe('2026-12-26');
+    // Unchanged when saved again, so the installment just paid isn't undone.
+    const again = buildCardBill(
+      { card, usageMonth: '2026-10', amount: 61_000, installment: 0, split: { amount: 31_000, months: 3, rate: 15, startsThisBill: true } },
+      paid.statement,
+      paid.updatedDebts,
+    );
+    expect(again.splitDebt).toBe(paid.updatedDebts[0]);
+    expect(again.statement.splitAmount).toBe(31_000);
+  });
+
   it('removes the split debt when the split is undone', () => {
-    const first = buildCardBill({ card, usageMonth: '2026-09', amount: 120_000, installment: 0, split: { amount: 60_000, months: 3, rate: 15 } }, undefined, []);
+    const first = buildCardBill({ card, usageMonth: '2026-09', amount: 120_000, installment: 0, split: { amount: 60_000, months: 3, rate: 15, startsThisBill: false } }, undefined, []);
     const again = buildCardBill({ card, usageMonth: '2026-09', amount: 120_000, installment: 0, split: null }, first.statement, [first.splitDebt!]);
     expect(again.splitDebt).toBeNull();
     expect(again.removedSplitDebtId).toBe(first.splitDebt!.id);
