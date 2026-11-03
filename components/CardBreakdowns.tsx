@@ -151,15 +151,14 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
     if (!preview || !card) return;
     setSaving(true);
     // A statement's payment amount is the bill itself. A PayPay history only
-    // gives a month total, used unless the bill is entered or a higher total was typed.
+    // gives a month total, used unless the bill is entered; it replaces a total typed by hand.
     const bills: ImportedBill[] = preview.kind === 'vpass' && useAsTotal ? months.flatMap((month) => {
       const entered = statementIn(snapshot, card.id, month.usageMonth);
       const saves = !entered || (entered.amount !== month.billed && canReplaceBill(entered));
       return month.billed !== null && month.usageMonth < currentMonth && saves ? [{ card, usageMonth: month.usageMonth, amount: month.billed }] : [];
     }) : [];
     const usages: CardUsage[] = preview.kind === 'paypay' && useAsTotal ? months.flatMap((month) => {
-      const typed = snapshot.cardUsage.find((item) => item.cardId === card.id && item.usageMonth === month.usageMonth);
-      if (statementIn(snapshot, card.id, month.usageMonth) || month.charged <= 0 || (typed && typed.amount > month.charged)) return [];
+      if (statementIn(snapshot, card.id, month.usageMonth) || month.charged <= 0) return [];
       const asOf = month.usageMonth < currentMonth ? dayOfMonth(month.usageMonth, 'last') : month.lastDate;
       return [{ id: cardUsageId(card.id, month.usageMonth), cardId: card.id, usageMonth: month.usageMonth, amount: month.charged, asOf }];
     }) : [];
@@ -331,7 +330,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
         {!isStatement && (
           <p className="mt-3 text-xs leading-relaxed text-ink-3">
             {breakdown.paidOtherWays > 0 && `${formatYen(breakdown.paidOtherWays)} paid with PayPay Points or Balance isn't on the card. `}
-            {billPurchases === null && "Purchases made with the card outside the PayPay app aren't included."}
+            {billPurchases === null && 'Some charges on the card, such as ETC tolls, don\'t appear in PayPay history.'}
           </p>
         )}
       </div>
@@ -412,11 +411,27 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
                 </label>
               );
             })
-          ) : (
-            <label className="flex cursor-pointer items-start gap-2 text-[13px] text-ink-2">
-              <input type="checkbox" checked={useAsTotal} onChange={(event) => setUseAsTotal(event.target.checked)} className="mt-0.5 h-4 w-4 accent-[rgb(var(--accent))]" />
-              Use the amount on the card as this card's month total, unless its bill is already entered
-            </label>
+          ) : card && (
+            // Same rules as confirmImport: an entered bill is kept and says so; a typed total is replaced.
+            months.map((month) => {
+              if (month.charged <= 0) return null;
+              const name = formatMonthName(month.usageMonth);
+              const entered = statementIn(snapshot, card.id, month.usageMonth);
+              const typed = snapshot.cardUsage.find((item) => item.cardId === card.id && item.usageMonth === month.usageMonth);
+              if (entered) {
+                return (
+                  <p key={month.usageMonth} className="text-xs leading-relaxed text-ink-3">
+                    {card.name}'s {name} bill is already entered ({formatYen(entered.amount)}), so no month total is needed.
+                  </p>
+                );
+              }
+              return (
+                <label key={month.usageMonth} className="flex cursor-pointer items-start gap-2 text-[13px] text-ink-2">
+                  <input type="checkbox" checked={useAsTotal} onChange={(event) => setUseAsTotal(event.target.checked)} className="mt-0.5 h-4 w-4 accent-[rgb(var(--accent))]" />
+                  Use {formatYen(month.charged)} as {card.name}'s {name} total{typed ? `, instead of the ${formatYen(typed.amount)} you typed on ${formatShortDate(typed.asOf)}` : ''}
+                </label>
+              );
+            })
           )}
           {card && months.map((month) => {
             const existing = snapshot.cardBreakdowns.find((item) => item.cardId === card.id && item.usageMonth === month.usageMonth);

@@ -50,6 +50,18 @@ describe('PayPay history', () => {
     expect(september.places.map((place) => place.label)).toEqual(['Rocket Now', 'マクドナルド', 'ファミリーマート']);
   });
 
+  it('counts the card used directly, under its other name, as the same card', () => {
+    // Paying with the card itself (online, abroad) shows as "PayPay Card VISA", not "Credit VISA".
+    const direct = parsePaypayHistory([
+      HEADER,
+      '2026/10/06 08:00:00,500,-,-,-,-,-,Payment,ローソン - 西口,"PayPay Point (20yen), Credit VISA 1234 (480yen)",-,-,1',
+      '2026/10/05 10:40:26,"9,000",-,50,EUR,180,NL,Payment,EXAMPLE TRAVEL,PayPay Card VISA 1234,Revolving Credit,Personal Use,2',
+    ].join('\n'));
+    expect(direct[1]).toMatchObject({ credit: 9_000, other: 0 });
+    expect(creditMethodsIn(direct)).toEqual(['Credit VISA 1234']);
+    expect(summarizePaypayHistory(direct, 'Credit VISA 1234')[0]).toMatchObject({ charged: 9_480, paidOtherWays: 20, payments: 2 });
+  });
+
   it('reads the Japanese export too', () => {
     const japanese = [
       '取引日,出金金額（円）,入金金額（円）,海外出金金額,通貨,変換レート（円）,利用国,取引内容,取引先,取引方法,支払い区分,利用者,取引番号',

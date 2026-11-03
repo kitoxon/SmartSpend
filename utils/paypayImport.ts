@@ -79,7 +79,13 @@ const COLUMNS = {
   method: ['Method', '取引方法'],
 } as const;
 
-const isCredit = (label: string) => /credit|クレジット/i.test(label);
+// A card, however the file names it: "Credit VISA 3150", or "PayPay Card VISA 3150" when the
+// card itself was used (online or in a shop) rather than through the app. Points and balance
+// ("PayPay Point", "PayPay Balance", "PayPay残高") are not cards.
+const isCredit = (label: string) => /credit|クレジット|card|カード|visa|master|jcb|amex|american express|diners/i.test(label);
+
+/** One card per last four digits, so both names above are the same card. */
+const cardOf = (method: string) => method.match(/(\d{4})\s*$/)?.[1] ?? method.trim().toLowerCase();
 
 /** Splits "PayPay Point (18yen), Credit VISA 3150 (82yen)" into its parts. */
 const splitMethod = (method: string, amount: number) => {
@@ -129,16 +135,22 @@ export const parsePaypayHistory = (text: string): PaypayPayment[] => {
   });
 };
 
-export const creditMethodsIn = (payments: PaypayPayment[]) =>
-  [...new Set(payments.map((payment) => payment.creditMethod).filter((method): method is string => Boolean(method)))];
+/** The cards in the file, one name each (the first one the file uses). */
+export const creditMethodsIn = (payments: PaypayPayment[]) => {
+  const byCard = new Map<string, string>();
+  for (const { creditMethod } of payments) {
+    if (creditMethod && !byCard.has(cardOf(creditMethod))) byCard.set(cardOf(creditMethod), creditMethod);
+  }
+  return [...byCard.values()];
+};
 
-/** One summary per month of the file, counting only what went on `creditMethod`. */
+/** One summary per month of the file, counting only what went on `creditMethod`'s card. */
 export const summarizePaypayHistory = (payments: PaypayPayment[], creditMethod: string): ImportedMonth[] => {
   const months = new Map<string, PaypayPayment[]>();
   for (const payment of payments) months.set(payment.date.slice(0, 7), [...(months.get(payment.date.slice(0, 7)) ?? []), payment]);
 
   return [...months.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([usageMonth, list]) => {
-    const onCard = list.filter((payment) => payment.creditMethod === creditMethod && payment.credit !== 0);
+    const onCard = list.filter((payment) => payment.creditMethod !== null && cardOf(payment.creditMethod) === cardOf(creditMethod) && payment.credit !== 0);
     const { categories, places } = groupMerchants(onCard.map((payment) => ({ merchant: payment.merchant, amount: payment.credit })));
     const dates = list.map((payment) => payment.date).sort();
     return {
