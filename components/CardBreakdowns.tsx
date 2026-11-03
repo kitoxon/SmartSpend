@@ -40,6 +40,7 @@ interface ImportMonth {
   paidOtherWays: number;
   billed: number | null;
   revolving: boolean;
+  notInBill: VpassMonth['notInBill'];
   categories: MerchantGroup[];
   places: MerchantGroup[];
 }
@@ -104,7 +105,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
   const card = cards.find((item) => item.id === cardId);
 
   const months: ImportMonth[] = !preview ? [] : preview.kind === 'paypay'
-    ? (method ? summarizePaypayHistory(preview.payments, method) : []).map((month) => ({ ...month, billed: null, revolving: false }))
+    ? (method ? summarizePaypayHistory(preview.payments, method) : []).map((month) => ({ ...month, billed: null, revolving: false, notInBill: [] }))
     : preview.months.map((month) => ({
       usageMonth: month.usageMonth,
       firstDate: month.firstDate,
@@ -114,6 +115,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
       paidOtherWays: 0,
       billed: month.billed,
       revolving: month.revolving,
+      notInBill: month.notInBill,
       categories: month.categories,
       places: month.places,
     }));
@@ -177,6 +179,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
       paidOtherWays: month.paidOtherWays,
       ...(month.billed !== null ? { billed: month.billed } : {}),
       ...(month.revolving ? { revolving: true } : {}),
+      ...(month.notInBill.length ? { notInBill: month.notInBill.map(({ merchant, amount, revolving }) => ({ label: merchant, amount, revolving })) } : {}),
       // Removing the import later also removes a month total it set.
       ...(usages.some((usage) => usage.usageMonth === month.usageMonth) ? { setMonthTotal: true } : {}),
       categories: month.categories,
@@ -237,6 +240,19 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
     const notInHistory = !isStatement && billPurchases !== null ? billPurchases - breakdown.charged : 0;
     // On revolving payment, purchases not in this bill carry over with interest.
     const carriedOver = isStatement && !inProgress && breakdown.billed !== undefined ? breakdown.charged - breakdown.billed : 0;
+    // Purchases left out of this payment. On リボ払い they carry over with interest; on 1回払い
+    // (often an overseas charge, which bills late) they're paid in full, now or on a later bill.
+    // Imports from before the statement listed them go by whether the card is on リボ払い.
+    const leftOut = carriedOver >= 1 && breakdown.notInBill?.length ? breakdown.notInBill : null;
+    const leftOutTotal = (revolving: boolean) => (leftOut
+      ? leftOut.filter((line) => line.revolving === revolving).reduce((sum, line) => sum + line.amount, 0)
+      : carriedOver >= 1 && Boolean(breakdown.revolving) === revolving ? carriedOver : 0);
+    const leftOutNames = (revolving: boolean) => {
+      const names = (leftOut ?? []).filter((line) => line.revolving === revolving).map((line) => line.label);
+      return names.length === 0 ? '' : names.length <= 3 ? ` (${names.join(', ')})` : ` (${names.slice(0, 3).join(', ')} and ${names.length - 3} more)`;
+    };
+    const carriedRevolving = leftOutTotal(true);
+    const laterInFull = leftOutTotal(false);
     const largest = Math.max(...breakdown.categories.map((category) => category.amount), notInHistory, 1);
     const categories = breakdown.categories.map((category) => ({ ...category, label: currentCategoryName(category.label) }));
     const top = categories[0];
@@ -258,9 +274,14 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
           </button>
         </div>
 
-        {carriedOver >= 1 && (
+        {carriedRevolving >= 1 && (
           <p className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-[13px] leading-relaxed text-warn">
-            {formatYen(carriedOver)} of these purchases isn't in this bill. On リボ払い (revolving payment) it carries over to later bills and is charged interest. Vpass shows the balance under リボ払い残高.
+            {formatYen(carriedRevolving)} of these purchases{leftOutNames(true)} isn't in this bill. On リボ払い (revolving payment) it carries over to later bills and is charged interest. Vpass shows the balance under リボ払い残高.
+          </p>
+        )}
+        {laterInFull >= 1 && (
+          <p className="mt-3 rounded-lg bg-subtle px-3 py-2 text-[13px] leading-relaxed text-ink-2">
+            {formatYen(laterInFull)} of these purchases{leftOutNames(false)} isn't in this payment yet. It's on 1回払い, not revolving, so it's paid in full: in this bill once the statement is final, or on a later bill. Overseas charges often bill late.
           </p>
         )}
         {carriedOver <= -1 && (

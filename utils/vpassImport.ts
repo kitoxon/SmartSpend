@@ -1,5 +1,5 @@
 import { LocalDate, monthKeyOf, ymd, shiftMonthKey } from './jpCalendar';
-import { MerchantGroup, groupMerchants } from './merchants';
+import { MerchantGroup, groupMerchants, normalizeMerchant } from './merchants';
 import { parseCsv } from './paypayImport';
 
 // Reads the statement CSVs downloaded from the SMBC Vpass website (三井住友カード,
@@ -21,6 +21,9 @@ export interface VpassMonth {
   foreignCount: number;
   revolving: boolean; // Any line or total on リボ払い
   billed: number | null; // This month's payment from the statement
+  // Lines with nothing in this payment (overseas charges often bill late),
+  // when the statement shows a payment per line.
+  notInBill: { merchant: string; amount: number; revolving: boolean }[];
   cardName?: string; // As the file names it, such as "Ｏｌｉｖｅ／クレジット"
   categories: MerchantGroup[];
   places: MerchantGroup[];
@@ -54,7 +57,7 @@ const CARD_NUMBER = /^\s*\d{4}-[\d*]{4}-[\d*]{4}-[\d*]{4}\s*$/;
 const NO_MONTH = 'no-month';
 
 type MonthRows = {
-  lines: { date: LocalDate; merchant: string; amount: number; foreign: boolean; revolving: boolean }[];
+  lines: { date: LocalDate; merchant: string; amount: number; paidNow: number | null; foreign: boolean; revolving: boolean }[];
   totals: { label: string; amount: number }[];
   paid: number[];
 };
@@ -86,6 +89,7 @@ export const parseVpassStatement = (text: string): VpassMonth[] => {
       date,
       merchant: (cells[1] ?? '').trim(),
       amount: row.used,
+      paidNow: row.paidNow,
       foreign: Boolean((row.foreign ?? '').trim()),
       revolving: row.revolving,
     });
@@ -120,6 +124,9 @@ export const parseVpassStatement = (text: string): VpassMonth[] => {
       foreignCount: month.lines.filter((line) => line.foreign).length,
       revolving: month.lines.some((line) => line.revolving) || month.totals.some((total) => /リボ/.test(total.label)),
       billed,
+      notInBill: month.paid.length === 0 ? [] : month.lines
+        .filter((line) => line.paidNow === null && line.amount > 0)
+        .map((line) => ({ merchant: normalizeMerchant(line.merchant), amount: line.amount, revolving: line.revolving })),
       ...(cardName ? { cardName } : {}),
       ...groupMerchants(month.lines),
     };

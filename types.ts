@@ -172,6 +172,8 @@ export interface CardBreakdown {
   paidOtherWays: number; // PayPay Points and Balance, not on the card
   billed?: number; // From a card statement: this month's payment
   revolving?: boolean; // Statement lines on リボ払い
+  // Statement lines with nothing in this payment, and whether each is on リボ払い.
+  notInBill?: { label: string; amount: number; revolving: boolean }[];
   setMonthTotal?: boolean; // The import also set the card's month total
   categories: { label: string; amount: number; count: number }[];
   places: { label: string; amount: number; count: number }[];
