@@ -32,13 +32,18 @@ describe('Vpass statement', () => {
 
   it('lists the lines left out of the payment, and whether each is revolving', () => {
     expect(parseVpassStatement(SAMPLE)[0].notInBill).toEqual([{ merchant: 'OVERSEAS SHOP', amount: 2_000, revolving: true }]);
-    // Paying in full: the overseas line isn't in this payment, but it isn't revolving either.
+    // Paying in full, before the final total: the overseas line shows no payment yet, but it's
+    // on 1回払い and due in November, so the bill counts it.
     const inFull = [
       "2026/10/21,業務ス－パ－  中央店,ご本人,1回払い,,'26/11,800,800,,,,,",
       "2026/10/5,ＯＶＥＲＳＥＡＳ  ＳＨＯＰ,ご本人,1回払い,,'26/11,9000,,,50.00,EUR,180,10/06",
     ].join('\r\n');
-    const [month] = parseVpassStatement(inFull);
-    expect(month).toMatchObject({ revolving: false, billed: 800, notInBill: [{ merchant: 'OVERSEAS SHOP', amount: 9_000, revolving: false }] });
+    expect(parseVpassStatement(inFull)[0]).toMatchObject({
+      revolving: false, billed: 9_800, notInBill: [], unconfirmed: [{ merchant: 'OVERSEAS SHOP', amount: 9_000 }],
+    });
+    // Once a final total leaves it out, it's billed later instead.
+    const final = parseVpassStatement(`${inFull}\r\n,ご請求合計,,,,'26/11,800,800,,,,,`)[0];
+    expect(final).toMatchObject({ billed: 800, unconfirmed: [], notInBill: [{ merchant: 'OVERSEAS SHOP', amount: 9_000, revolving: false }] });
   });
 
   it('adds up the paid column when there is no total row', () => {
@@ -114,7 +119,7 @@ describe('which card a statement belongs to', () => {
   const cards = [amazon, olive, paypay];
   const month = (places: [string, number][]): VpassMonth => ({
     billingMonth: '2026-11', usageMonth: '2026-10', firstDate: '2026-10-01', lastDate: '2026-10-30', count: places.length, foreignCount: 0,
-    revolving: false, billed: null, notInBill: [], purchases: places.reduce((sum, [, amount]) => sum + amount, 0),
+    revolving: false, billed: null, notInBill: [], unconfirmed: [], purchases: places.reduce((sum, [, amount]) => sum + amount, 0),
     categories: [], places: places.map(([label, amount]) => ({ label, amount, count: 1 })),
   });
 

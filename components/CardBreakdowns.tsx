@@ -41,6 +41,7 @@ interface ImportMonth {
   billed: number | null;
   revolving: boolean;
   notInBill: VpassMonth['notInBill'];
+  unconfirmed: VpassMonth['unconfirmed'];
   categories: MerchantGroup[];
   places: MerchantGroup[];
 }
@@ -105,7 +106,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
   const card = cards.find((item) => item.id === cardId);
 
   const months: ImportMonth[] = !preview ? [] : preview.kind === 'paypay'
-    ? (method ? summarizePaypayHistory(preview.payments, method) : []).map((month) => ({ ...month, billed: null, revolving: false, notInBill: [] }))
+    ? (method ? summarizePaypayHistory(preview.payments, method) : []).map((month) => ({ ...month, billed: null, revolving: false, notInBill: [], unconfirmed: [] }))
     : preview.months.map((month) => ({
       usageMonth: month.usageMonth,
       firstDate: month.firstDate,
@@ -116,6 +117,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
       billed: month.billed,
       revolving: month.revolving,
       notInBill: month.notInBill,
+      unconfirmed: month.unconfirmed,
       categories: month.categories,
       places: month.places,
     }));
@@ -180,6 +182,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
       ...(month.billed !== null ? { billed: month.billed } : {}),
       ...(month.revolving ? { revolving: true } : {}),
       ...(month.notInBill.length ? { notInBill: month.notInBill.map(({ merchant, amount, revolving }) => ({ label: merchant, amount, revolving })) } : {}),
+      ...(month.unconfirmed.length ? { unconfirmed: month.unconfirmed.map(({ merchant, amount }) => ({ label: merchant, amount })) } : {}),
       // Removing the import later also removes a month total it set.
       ...(usages.some((usage) => usage.usageMonth === month.usageMonth) ? { setMonthTotal: true } : {}),
       categories: month.categories,
@@ -279,6 +282,11 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
             {formatYen(carriedRevolving)} of these purchases{leftOutNames(true)} isn't in this bill. On リボ払い (revolving payment) it carries over to later bills and is charged interest. Vpass shows the balance under リボ払い残高.
           </p>
         )}
+        {isStatement && !inProgress && breakdown.unconfirmed?.length ? (
+          <p className="mt-3 rounded-lg bg-subtle px-3 py-2 text-[13px] leading-relaxed text-ink-2">
+            Counted in this bill: {breakdown.unconfirmed.map((line) => `${line.label} (${formatYen(line.amount)})`).join(', ')}. It's on 1回払い and due with this payment, but the statement doesn't show it as paid yet, which is common for overseas charges. The final statement, around the 10th, confirms the bill.
+          </p>
+        ) : null}
         {laterInFull >= 1 && (
           <p className="mt-3 rounded-lg bg-subtle px-3 py-2 text-[13px] leading-relaxed text-ink-2">
             {formatYen(laterInFull)} of these purchases{leftOutNames(false)} isn't in this payment yet. It's on 1回払い, not revolving, so it's paid in full: in this bill once the statement is final, or on a later bill. Overseas charges often bill late.

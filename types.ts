@@ -175,6 +175,8 @@ export interface CardBreakdown {
   revolving?: boolean; // Statement lines on リボ払い
   // Statement lines with nothing in this payment, and whether each is on リボ払い.
   notInBill?: { label: string; amount: number; revolving: boolean }[];
+  // 1回払い lines due with this payment but not shown as paid yet; the bill counts them.
+  unconfirmed?: { label: string; amount: number }[];
   setMonthTotal?: boolean; // The import also set the card's month total
   categories: { label: string; amount: number; count: number }[];
   places: { label: string; amount: number; count: number }[];

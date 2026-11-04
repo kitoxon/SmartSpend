@@ -21,9 +21,13 @@ export interface VpassMonth {
   foreignCount: number;
   revolving: boolean; // Any line or total on リボ払い
   billed: number | null; // This month's payment from the statement
-  // Lines with nothing in this payment (overseas charges often bill late),
-  // when the statement shows a payment per line.
+  // Lines with nothing in this payment, when the statement shows a payment per line:
+  // on リボ払い they carry over, and a final statement's total can leave out late
+  // overseas charges.
   notInBill: { merchant: string; amount: number; revolving: boolean }[];
+  // 1回払い lines with no payment shown yet before the statement has its total. They're
+  // due with this payment (overseas charges are confirmed late), so the bill counts them.
+  unconfirmed: { merchant: string; amount: number }[];
   cardName?: string; // As the file names it, such as "Ｏｌｉｖｅ／クレジット"
   categories: MerchantGroup[];
   places: MerchantGroup[];
@@ -110,9 +114,14 @@ export const parseVpassStatement = (text: string): VpassMonth[] => {
     // One total row is the bill. With several, the overall total: a "合計" row,
     // or the unlabelled row that ends the statement.
     const grand = month.totals.find((total) => /合計/.test(total.label)) ?? month.totals.find((total) => total.label === '');
+    const unpaidLines = month.paid.length === 0 ? [] : month.lines.filter((line) => line.paidNow === null && line.amount > 0);
+    const final = month.totals.length > 0;
+    const unconfirmed = final ? [] : unpaidLines.filter((line) => !line.revolving);
     const billed = month.totals.length === 1
       ? month.totals[0].amount
-      : grand?.amount ?? (month.totals.length ? month.totals.reduce((sum, total) => sum + total.amount, 0) : month.paid.length ? month.paid.reduce((sum, value) => sum + value, 0) : null);
+      : grand?.amount ?? (final
+        ? month.totals.reduce((sum, total) => sum + total.amount, 0)
+        : month.paid.length ? [...month.paid, ...unconfirmed.map((line) => line.amount)].reduce((sum, value) => sum + value, 0) : null);
     const dates = month.lines.map((line) => line.date).sort();
     return {
       billingMonth,
@@ -124,9 +133,9 @@ export const parseVpassStatement = (text: string): VpassMonth[] => {
       foreignCount: month.lines.filter((line) => line.foreign).length,
       revolving: month.lines.some((line) => line.revolving) || month.totals.some((total) => /リボ/.test(total.label)),
       billed,
-      notInBill: month.paid.length === 0 ? [] : month.lines
-        .filter((line) => line.paidNow === null && line.amount > 0)
+      notInBill: unpaidLines.filter((line) => !unconfirmed.includes(line))
         .map((line) => ({ merchant: normalizeMerchant(line.merchant), amount: line.amount, revolving: line.revolving })),
+      unconfirmed: unconfirmed.map((line) => ({ merchant: normalizeMerchant(line.merchant), amount: line.amount })),
       ...(cardName ? { cardName } : {}),
       ...groupMerchants(month.lines),
     };
