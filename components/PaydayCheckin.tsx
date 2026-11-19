@@ -139,7 +139,7 @@ export const PaydayCheckin: React.FC<PaydayCheckinProps> = ({ mode, plan, data, 
             <div>
               <label htmlFor="checkin-salary" className="field-label">Salary · {formatWeekdayDate(plan.cycle.payday)}</label>
               <AmountInput id="checkin-salary" value={salary} onChange={setSalary} size="lg" placeholder="0" autoFocus />
-              <p className="mt-1 text-xs text-ink-3">The amount that reached your account, with overtime and allowances.</p>
+              <p className="mt-1 text-xs text-ink-3">Leave out overtime or allowances that you log separately as income, so they aren't counted twice.</p>
             </div>
             <div>
               <label htmlFor="checkin-carryover" className="field-label">Money left before the salary arrived</label>

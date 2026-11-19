@@ -18,9 +18,9 @@ interface TransactionFormProps {
 
 const defaultCategory = (type: TransactionType) => (type === 'income' ? Category.Freelance : Category.Food);
 
-// Salary (and the overtime paid with it) is entered at the payday check-in, so
-// offering it here would leave money out of the plan or count it twice.
-const ADDABLE_INCOME_CATEGORIES = INCOME_CATEGORIES.filter((category) => category !== Category.Salary && category !== Category.Overtime);
+// Salary is entered at the payday check-in, so offering it here would count it
+// twice. Overtime and allowances can go either way: in the salary amount, or here.
+const ADDABLE_INCOME_CATEGORIES = INCOME_CATEGORIES.filter((category) => category !== Category.Salary);
 
 export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, transaction, prefill, existingTransactions = [], onDelete }) => {
   const initialType = transaction?.type ?? prefill?.type ?? 'expense';
@@ -129,7 +129,7 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
             </button>
           )}
         </div>
-        {type === 'income' && !transaction && <p className="mt-2 text-xs text-ink-3">Salary, and overtime paid with it, goes in at the payday check-in, not here.</p>}
+        {type === 'income' && !transaction && <p className="mt-2 text-xs text-ink-3">Salary goes in at the payday check-in. Log overtime or an allowance here only if you left it out of the salary amount.</p>}
       </div>
 
       <div>
