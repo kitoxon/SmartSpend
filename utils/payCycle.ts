@@ -2,7 +2,7 @@ import {
   Bill, BillPayment, Card, CardStatement, CardUsage, Category, Debt, PayCycleRecord, PlannerData, PlannerSettings, Transaction,
 } from '../types';
 import {
-  LocalDate, addDays, dayOfMonth, daysInMonth, diffDays, fromDate, monthKeyOf, parseLocalDate, shiftMonthKey, shiftToBusinessDay,
+  LocalDate, addDays, dayOfMonth, daysInMonth, diffDays, fromDate, monthKeyOf, monthsBetween, parseLocalDate, shiftMonthKey, shiftToBusinessDay,
 } from './jpCalendar';
 import { cashOutflowFor, isBalanceAdjustment } from './transactions';
 
@@ -152,6 +152,9 @@ export interface CyclePlan {
   carryover: number;
   savings: number;
   otherIncome: number;
+  // Income besides salary that comes most cycles, expected in a cycle that hasn't started.
+  usualIncome: UsualIncome[];
+  usualIncomeTotal: number;
   obligations: Obligation[];
   obligationsTotal: number;
   unpaidTotal: number;
@@ -245,6 +248,46 @@ const debtObligations = (cycle: PayCycle, countFrom: LocalDate, status: CyclePla
     }];
   });
 
+export interface UsualIncome {
+  label: string; // The note it's logged with, or its category
+  amount: number; // The lowest it has been, so the estimate isn't hopeful
+  cycles: number; // How many of the recent cycles it came in
+}
+
+const RECENT_CYCLES = 4;
+const USUAL_IN_AT_LEAST = 3;
+
+const isOtherIncome = (transaction: Transaction) =>
+  transaction.type === 'income' && transaction.category !== Category.Salary && !isBalanceAdjustment(transaction);
+
+const incomeKey = (transaction: Transaction) => `${transaction.category}:${transaction.description.trim().toLowerCase()}`;
+
+/**
+ * Income besides salary that can be expected again: logged with the same
+ * category and note in at least three of the last four cycles, this one
+ * included. A commuting allowance counts; overtime noted with its hours, or a
+ * one-off refund, doesn't.
+ */
+export const usualOtherIncome = (input: PlanInput): (UsualIncome & { key: string })[] => {
+  const settings = input.data.settings;
+  const current = cycleForDate(input.today, settings);
+  const perCycle = new Map<string, { label: string; amounts: Map<string, number> }>();
+  for (const transaction of input.transactions) {
+    if (!isOtherIncome(transaction)) continue;
+    const date = localDateOfTransaction(transaction);
+    if (date === null || date > current.end) continue;
+    const cycleKey = cycleForDate(date, settings).key;
+    if (monthsBetween(cycleKey, current.key) >= RECENT_CYCLES) continue;
+    const entry = perCycle.get(incomeKey(transaction)) ?? { label: transaction.description.trim() || transaction.category, amounts: new Map<string, number>() };
+    entry.amounts.set(cycleKey, (entry.amounts.get(cycleKey) ?? 0) + transaction.amount);
+    perCycle.set(incomeKey(transaction), entry);
+  }
+  return [...perCycle.entries()]
+    .filter(([, entry]) => entry.amounts.size >= USUAL_IN_AT_LEAST)
+    .map(([key, entry]) => ({ key, label: entry.label, amount: Math.min(...entry.amounts.values()), cycles: entry.amounts.size }))
+    .sort((a, b) => b.amount - a.amount);
+};
+
 export const buildCyclePlan = (cycle: PayCycle, input: PlanInput): CyclePlan => {
   const { data, transactions, today } = input;
   const record = data.cycles.find((item) => item.key === cycle.key) ?? null;
@@ -271,6 +314,12 @@ export const buildCyclePlan = (cycle: PayCycle, input: PlanInput): CyclePlan => 
   const otherIncome = cashTransactions
     .filter((transaction) => transaction.type === 'income' && transaction.category !== Category.Salary)
     .reduce((sum, transaction) => sum + transaction.amount, 0);
+  // A cycle that hasn't started has no income logged yet, so what usually comes is expected.
+  const alreadyLogged = new Set(cashTransactions.filter(isOtherIncome).map(incomeKey));
+  const usualIncome = record || status !== 'future' ? [] : usualOtherIncome(input)
+    .filter((income) => !alreadyLogged.has(income.key))
+    .map(({ label, amount, cycles }) => ({ label, amount, cycles }));
+  const usualIncomeTotal = usualIncome.reduce((sum, income) => sum + income.amount, 0);
 
   const previous = record ? null : data.cycles.find((item) => item.key === shiftMonthKey(cycle.key, -1));
   const salary = record?.salary ?? previous?.salary ?? 0;
@@ -279,7 +328,7 @@ export const buildCyclePlan = (cycle: PayCycle, input: PlanInput): CyclePlan => 
 
   const obligationsTotal = obligations.reduce((sum, item) => sum + item.amount, 0);
   const unpaidTotal = obligations.filter((item) => !item.paid).reduce((sum, item) => sum + item.amount, 0);
-  const free = carryover + salary + otherIncome - savings - obligationsTotal;
+  const free = carryover + salary + otherIncome + usualIncomeTotal - savings - obligationsTotal;
   const left = free - cashSpent;
 
   const daysTotal = diffDays(cycle.start, cycle.end) + 1;
@@ -289,7 +338,7 @@ export const buildCyclePlan = (cycle: PayCycle, input: PlanInput): CyclePlan => 
   const perDay = daysLeft > 0 ? Math.floor(Math.max(0, left + (status === 'current' ? spentToday : 0)) / daysLeft) : 0;
 
   return {
-    cycle, record, status, countFrom, salary, carryover, savings, otherIncome, obligations, obligationsTotal,
+    cycle, record, status, countFrom, salary, carryover, savings, otherIncome, usualIncome, usualIncomeTotal, obligations, obligationsTotal,
     unpaidTotal, free, cashSpent, left, cashTransactions, spentToday, daysTotal, dayNumber, daysLeft, perDay,
   };
 };
@@ -314,7 +363,7 @@ export interface CycleBreakdown {
 export const cycleBreakdown = (plan: CyclePlan): CycleBreakdown => {
   const cards = plan.obligations.filter((item) => item.kind === 'card').reduce((sum, item) => sum + item.amount, 0);
   return {
-    moneyIn: plan.carryover + plan.salary + plan.otherIncome,
+    moneyIn: plan.carryover + plan.salary + plan.otherIncome + plan.usualIncomeTotal,
     bills: plan.obligationsTotal - cards,
     cards,
     cash: plan.cashSpent,

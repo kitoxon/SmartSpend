@@ -93,6 +93,8 @@ const ObligationRow: React.FC<{
   );
 };
 
+const usualIncomeLabel = (plan: CyclePlan) => `Usual income · ${plan.usualIncome.map((income) => income.label).join(', ')}`;
+
 /** Preview of the coming cycle, driven by this month's card totals. */
 const NextCycleCard: React.FC<{ plan: CyclePlan; onOpenCards: () => void }> = ({ plan, onOpenCards }) => {
   const breakdown = cycleBreakdown(plan);
@@ -121,11 +123,15 @@ const NextCycleCard: React.FC<{ plan: CyclePlan; onOpenCards: () => void }> = ({
       </p>
       <div className="mt-3 border-t border-line pt-1.5">
         <Row label="Salary" value={salaryKnown ? formatYen(plan.salary) : <span className="text-ink-3">At check-in</span>} muted />
+        {salaryKnown && plan.usualIncomeTotal > 0 && <Row label={usualIncomeLabel(plan)} value={`+${formatYen(plan.usualIncomeTotal)}`} muted />}
         <Row label="Card bills" value={`−${formatYen(breakdown.cards)}`} muted />
         <Row label="Transfer bills" value={`−${formatYen(breakdown.bills)}`} muted />
         {plan.savings > 0 && <Row label="Savings" value={`−${formatYen(plan.savings)}`} muted />}
       </div>
-      <p className="mt-2 text-xs leading-relaxed text-ink-3">{note}</p>
+      <p className="mt-2 text-xs leading-relaxed text-ink-3">
+        {note}
+        {salaryKnown && plan.usualIncomeTotal > 0 && ' Usual income is what you logged in most recent cycles, at its lowest amount; overtime and one-off income aren\'t counted.'}
+      </p>
     </section>
   );
 };
@@ -277,6 +283,7 @@ export const CycleHome: React.FC<CycleHomeProps> = ({
                 </>
               )}
               {plan.otherIncome > 0 && <Row label="Other income" value={`+${formatYen(plan.otherIncome)}`} muted />}
+              {plan.usualIncomeTotal > 0 && <Row label={usualIncomeLabel(plan)} value={`+${formatYen(plan.usualIncomeTotal)}`} muted />}
               {plan.savings > 0 && <Row label="Set aside for savings" value={`−${formatYen(plan.savings)}`} muted />}
               {plan.obligations.length > 0 && (
                 <div className="mt-1 border-t border-line pt-2">

@@ -204,6 +204,45 @@ describe('balance and history', () => {
   });
 });
 
+describe('usual income besides salary', () => {
+  const income = (date: string, amount: number, description: string, category = Category.Allowance): Transaction => ({
+    id: `${date}-${description}`, date: localDateInputToIso(date), amount, category, description, type: 'income',
+  });
+  const data = emptyData();
+  data.cycles = [{ id: 'c', key: '2026-11', salary: 170_000, carryover: 0, savings: 0, checkedInAt: '' }];
+  const transactions = [
+    income('2026-09-18', 11_440, 'Transportation'), // The September cycle starts Fri Sep 18
+    income('2026-10-20', 10_920, 'Transportation'),
+    income('2026-11-20', 11_440, 'transportation '),
+    income('2026-09-18', 58_200, 'Refresh'),
+    income('2026-11-20', 17_400, 'Refresh'), // Only two of the four cycles
+    income('2026-11-20', 25_526, 'Overtime 15.75', Category.Other),
+    income('2026-10-30', 9_525, BALANCE_ADJUSTMENT_NOTE, Category.Other),
+    income('2026-07-20', 11_440, 'Transportation'), // Too long ago to count
+    { ...income('2026-11-20', 170_000, 'Salary', Category.Salary) },
+  ];
+  const input = { data, debts: [], transactions, today: '2026-11-20' };
+
+  it('expects income that came in most recent cycles, at its lowest', () => {
+    const next = buildCyclePlan(getCycle('2026-12'), input);
+    expect(next.usualIncome).toEqual([{ label: 'Transportation', amount: 10_920, cycles: 3 }]);
+    expect(next.free).toBe(170_000 + 10_920); // Last salary and the allowance; no bills here
+    expect(cycleBreakdown(next).moneyIn).toBe(180_920);
+  });
+
+  it('leaves it out of cycles that have started, where real income is logged', () => {
+    const current = buildCyclePlan(getCycle('2026-11'), input);
+    expect(current.usualIncomeTotal).toBe(0);
+    expect(current.otherIncome).toBe(11_440 + 17_400 + 25_526);
+    expect(buildCyclePlan(getCycle('2026-10'), input).usualIncomeTotal).toBe(0);
+  });
+
+  it('does not count income already logged for the coming cycle', () => {
+    const early = [...transactions, income('2026-12-18', 11_440, 'Transportation')];
+    expect(buildCyclePlan(getCycle('2026-12'), { ...input, transactions: early }).usualIncomeTotal).toBe(0);
+  });
+});
+
 describe('unusually high bills', () => {
   it('flags only bills well above the usual amount', () => {
     expect(unusuallyHighBy(130_000, 100_000)).toBe(30_000); // 30% over

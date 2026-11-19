@@ -183,7 +183,7 @@ export const AffordCheck: React.FC<AffordCheckProps> = ({ cards, planInput, sett
           </div>
         )}
         <p className="text-xs leading-relaxed text-ink-3">
-          Later cycles assume your last salary ({formatYen(salaryEstimate)}) and your usual card spending; the purchase comes on top. Leftover money is assumed spent, and a shortfall comes out of the next cycle. Nothing is saved.
+          Later cycles assume your last salary ({formatYen(salaryEstimate)}), other income that comes most cycles, and your usual card spending; the purchase comes on top. Leftover money is assumed spent, and a shortfall comes out of the next cycle. Nothing is saved.
         </p>
       </div>
     </div>
