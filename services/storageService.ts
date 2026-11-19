@@ -107,6 +107,19 @@ const writeLocal = <T,>(baseKey: string, userId: string | null, value: T) => {
   localStorage.setItem(scopedKey(baseKey, userId), JSON.stringify(value));
 };
 
+// Supabase returns at most 1,000 rows per request, so a longer table is read a page
+// at a time. The query needs an order that never ties, or pages could overlap.
+const PAGE_SIZE = 1000;
+const readAllRows = async <T,>(readPage: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>) => {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await readPage(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) return rows;
+  }
+};
+
 const stripOwner = <T,>(row: T & { user_id?: string }): T => {
   const { user_id: _userId, ...record } = row;
   return record as T;
@@ -326,13 +339,15 @@ export const getTransactions = async (): Promise<Transaction[]> => {
   try {
     const version = writeVersion('transactions');
     await prepareCloudRead('transactions');
-    const { data, error } = await supabase
+    const client = supabase;
+    const data = await readAllRows((from, to) => client
       .from('transactions')
       .select('*')
       .eq('user_id', userId)
       .order('date', { ascending: false })
-      .order('created_at', { ascending: false });
-    if (error) throw error;
+      .order('created_at', { ascending: false })
+      .order('id')
+      .range(from, to));
     // A save landed while this read was out; this device's copy is newer.
     if (changedLocallySince('transactions', version)) return sortTransactions(readLocal<Transaction[]>(STORAGE_KEY, userId, []));
     const remote = sortTransactions((data ?? []).map((row) => stripOwner(row as Transaction & { user_id?: string })));
@@ -589,8 +604,8 @@ export const getPlannerRecords = async (): Promise<PlannerRecord[]> => {
   try {
     const version = writeVersion('planner_records');
     await prepareCloudRead('planner_records');
-    const { data, error } = await supabase.from('planner_records').select('id, kind, data, updated_at').eq('user_id', userId);
-    if (error) throw error;
+    const client = supabase;
+    const data = await readAllRows((from, to) => client.from('planner_records').select('id, kind, data, updated_at').eq('user_id', userId).order('id').range(from, to));
     // A save landed while this read was out; this device's copy is newer.
     if (changedLocallySince('planner_records', version)) return readLocal<PlannerRecord[]>(PLANNER_KEY, userId, []);
     const remote = (data ?? []) as PlannerRecord[];
