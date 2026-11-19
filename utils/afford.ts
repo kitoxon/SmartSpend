@@ -1,6 +1,7 @@
 import { Card, PlannerSettings } from '../types';
 import { CyclePlan, cardDueDate, cycleForDate } from './payCycle';
 import { LocalDate, monthKeyOf, monthsBetween, shiftMonthKey } from './jpCalendar';
+import { splitSchedule } from './cardSplit';
 
 // "Can I afford this?": a purchase tried out against the coming pay cycles,
 // without saving anything.
@@ -10,13 +11,13 @@ const MIN_CYCLES = 3;
 
 export type PayWith =
   | { kind: 'cash' }
-  // payments 1 is the card's usual pay-in-full; rate is yearly interest in percent, for splits.
-  | { kind: 'card'; card: Card; payments: number; rate: number };
+  // payments 1 is the card's usual pay-in-full; feePer100 is the card's 分割払い fee for more.
+  | { kind: 'card'; card: Card; payments: number; feePer100: number };
 
 export interface PurchasePayment {
   dueDate: LocalDate;
-  amount: number; // Principal and interest
-  interest: number;
+  amount: number; // Its share of the price, plus its share of the fee
+  interest: number; // The fee part
 }
 
 export type Verdict = 'affordable' | 'tight' | 'short';
@@ -40,20 +41,18 @@ export interface Affordability {
 
 /**
  * When the purchase leaves the account. Cash or debit: today. On a card:
- * with the bill for this month's purchases, or split into equal parts from
- * that bill on, each adding a month's interest on what's still owed.
+ * with the bill for this month's purchases, or split into payments from that
+ * bill on, with the card's fee spread over them.
  */
 export const purchasePayments = (price: number, payWith: PayWith, today: LocalDate): PurchasePayment[] => {
   if (payWith.kind === 'cash') return [{ dueDate: today, amount: price, interest: 0 }];
   const usageMonth = monthKeyOf(today);
   const count = Math.max(1, Math.round(payWith.payments));
-  const part = Math.ceil(price / count);
-  let owed = price;
+  const schedule = splitSchedule([price], count, payWith.feePer100);
+  const feeless = splitSchedule([price], count, 0);
   return Array.from({ length: count }, (_, index) => {
-    const principal = index === count - 1 ? owed : Math.min(part, owed);
-    const interest = count > 1 ? Math.round((owed * payWith.rate) / 100 / 12) : 0;
-    owed -= principal;
-    return { dueDate: cardDueDate(payWith.card, shiftMonthKey(usageMonth, index)), amount: principal + interest, interest };
+    const amount = index === 0 ? schedule.first : schedule.monthly;
+    return { dueDate: cardDueDate(payWith.card, shiftMonthKey(usageMonth, index)), amount, interest: amount - (index === 0 ? feeless.first : feeless.monthly) };
   });
 };
 

@@ -1,6 +1,7 @@
 import { LocalDate, monthKeyOf, ymd, shiftMonthKey } from './jpCalendar';
 import { MerchantGroup, groupMerchants, normalizeMerchant } from './merchants';
 import { parseCsv } from './paypayImport';
+import { SplitLine } from '../types';
 
 // Reads the statement CSVs downloaded from the SMBC Vpass website (三井住友カード,
 // Olive). Both start with a line naming the cardholder, the masked card number
@@ -28,6 +29,9 @@ export interface VpassMonth {
   // 1回払い lines with no payment shown yet before the statement has its total. They're
   // due with this payment (overseas charges are confirmed late), so the bill counts them.
   unconfirmed: { merchant: string; amount: number }[];
+  // Purchases in this payment that あとから分割 accepts: ¥1,000 or more, paid in one or
+  // two payments or with a bonus, and not already revolving or in installments.
+  splittable: SplitLine[];
   cardName?: string; // As the file names it, such as "Ｏｌｉｖｅ／クレジット"
   categories: MerchantGroup[];
   places: MerchantGroup[];
@@ -60,8 +64,14 @@ const CARD_NUMBER = /^\s*\d{4}-[\d*]{4}-[\d*]{4}-[\d*]{4}\s*$/;
 // Rows of the layout without a payment month; their month comes from the dates.
 const NO_MONTH = 'no-month';
 
+// 1回払い, 2回払い and ボーナス一括払い; the layout without a payment type only lists such purchases.
+const CAN_SPLIT_LATER = /^$|^[12]回|ボーナス/;
+const MIN_SPLIT_AMOUNT = 1_000;
+// Charged by the card company itself, which あとから分割 leaves out.
+const NEVER_SPLIT = /年会費|手数料/;
+
 type MonthRows = {
-  lines: { date: LocalDate; merchant: string; amount: number; paidNow: number | null; foreign: boolean; revolving: boolean }[];
+  lines: { date: LocalDate; merchant: string; amount: number; paidNow: number | null; foreign: boolean; revolving: boolean; payType: string }[];
   totals: { label: string; amount: number }[];
   paid: number[];
 };
@@ -77,8 +87,8 @@ export const parseVpassStatement = (text: string): VpassMonth[] => {
     }
     const billingMonth = billingMonthOf(cells[5]);
     const row = billingMonth
-      ? { key: billingMonth, used: amount(cells[6]), paidNow: amount(cells[7]), foreign: cells[10], revolving: /リボ/.test(cells[3] ?? '') }
-      : { key: NO_MONTH, used: amount(cells[2]), paidNow: amount(cells[5]), foreign: cells[6], revolving: false };
+      ? { key: billingMonth, used: amount(cells[6]), paidNow: amount(cells[7]), foreign: cells[10], revolving: /リボ/.test(cells[3] ?? ''), payType: (cells[3] ?? '').normalize('NFKC').trim() }
+      : { key: NO_MONTH, used: amount(cells[2]), paidNow: amount(cells[5]), foreign: cells[6], revolving: false, payType: '' };
     const month = months.get(row.key) ?? { lines: [], totals: [], paid: [] };
     months.set(row.key, month);
     const date = useDateOf(cells[0]);
@@ -96,6 +106,7 @@ export const parseVpassStatement = (text: string): VpassMonth[] => {
       paidNow: row.paidNow,
       foreign: Boolean((row.foreign ?? '').trim()),
       revolving: row.revolving,
+      payType: row.payType,
     });
     if (row.paidNow !== null) month.paid.push(row.paidNow);
   }
@@ -122,6 +133,14 @@ export const parseVpassStatement = (text: string): VpassMonth[] => {
       : grand?.amount ?? (final
         ? month.totals.reduce((sum, total) => sum + total.amount, 0)
         : month.paid.length ? [...month.paid, ...unconfirmed.map((line) => line.amount)].reduce((sum, value) => sum + value, 0) : null);
+    const leftOut = unpaidLines.filter((line) => !unconfirmed.includes(line));
+    // A statement on リボ払い without a type per line can't say which purchases are still in one payment.
+    const anyRevolving = month.lines.some((line) => line.revolving) || month.totals.some((total) => /リボ/.test(total.label));
+    const splittable = month.lines
+      .map((line, index) => ({ line, id: String(index) }))
+      .filter(({ line }) => line.amount >= MIN_SPLIT_AMOUNT && !line.revolving && CAN_SPLIT_LATER.test(line.payType)
+        && !(line.payType === '' && anyRevolving) && !NEVER_SPLIT.test(line.merchant) && !leftOut.includes(line))
+      .map(({ line, id }) => ({ id, date: line.date, label: normalizeMerchant(line.merchant), amount: line.amount }));
     const dates = month.lines.map((line) => line.date).sort();
     return {
       billingMonth,
@@ -131,11 +150,12 @@ export const parseVpassStatement = (text: string): VpassMonth[] => {
       purchases: month.lines.reduce((sum, line) => sum + line.amount, 0),
       count: month.lines.filter((line) => line.amount > 0).length,
       foreignCount: month.lines.filter((line) => line.foreign).length,
-      revolving: month.lines.some((line) => line.revolving) || month.totals.some((total) => /リボ/.test(total.label)),
+      revolving: anyRevolving,
       billed,
-      notInBill: unpaidLines.filter((line) => !unconfirmed.includes(line))
+      notInBill: leftOut
         .map((line) => ({ merchant: normalizeMerchant(line.merchant), amount: line.amount, revolving: line.revolving })),
       unconfirmed: unconfirmed.map((line) => ({ merchant: normalizeMerchant(line.merchant), amount: line.amount })),
+      splittable,
       ...(cardName ? { cardName } : {}),
       ...groupMerchants(month.lines),
     };

@@ -19,21 +19,22 @@ describe('purchase payments', () => {
   it('pays cash today and a card with the next bill', () => {
     expect(purchasePayments(30_000, { kind: 'cash' }, today)).toEqual([{ dueDate: today, amount: 30_000, interest: 0 }]);
     // November purchases are paid on Dec 26, a Saturday, so Monday Dec 28.
-    expect(purchasePayments(30_000, { kind: 'card', card: olive, payments: 1, rate: 15 }, today))
+    expect(purchasePayments(30_000, { kind: 'card', card: olive, payments: 1, feePer100: 0 }, today))
       .toEqual([{ dueDate: '2026-12-28', amount: 30_000, interest: 0 }]);
   });
 
-  it('splits from that bill on, with interest on what is still owed', () => {
-    expect(purchasePayments(30_000, { kind: 'card', card: olive, payments: 3, rate: 15 }, today)).toEqual([
-      { dueDate: '2026-12-28', amount: 10_375, interest: 375 },
-      { dueDate: '2027-01-26', amount: 10_250, interest: 250 },
-      { dueDate: '2027-02-26', amount: 10_125, interest: 125 },
+  it('splits from that bill on, with the card\'s fee in equal payments', () => {
+    // 2.46 per ¥100 for 3 payments: ¥738 on ¥30,000, so three payments of ¥10,246.
+    expect(purchasePayments(30_000, { kind: 'card', card: olive, payments: 3, feePer100: 2.46 }, today)).toEqual([
+      { dueDate: '2026-12-28', amount: 10_246, interest: 246 },
+      { dueDate: '2027-01-26', amount: 10_246, interest: 246 },
+      { dueDate: '2027-02-26', amount: 10_246, interest: 246 },
     ]);
   });
 
   it('checks every cycle until the last payment, and at least three', () => {
     expect(cycleKeysToCheck('2026-10', purchasePayments(5_000, { kind: 'cash' }, today), settings)).toEqual(['2026-10', '2026-11', '2026-12']);
-    const split = purchasePayments(60_000, { kind: 'card', card: olive, payments: 6, rate: 15 }, today);
+    const split = purchasePayments(60_000, { kind: 'card', card: olive, payments: 6, feePer100: 4.92 }, today);
     expect(cycleKeysToCheck('2026-10', split, settings).at(-1)).toBe('2027-05'); // Paid May 26, after the May 20 payday
   });
 });
@@ -60,7 +61,7 @@ describe('affordability', () => {
   });
 
   it('puts a card purchase in the cycle its bill is paid in', () => {
-    const result = checkAffordability(plans, purchasePayments(50_000, { kind: 'card', card: olive, payments: 1, rate: 15 }, today), 170_000, 20_000);
+    const result = checkAffordability(plans, purchasePayments(50_000, { kind: 'card', card: olive, payments: 1, feePer100: 0 }, today), 170_000, 20_000);
     expect(result.cycles.map((cycle) => cycle.after)).toEqual([31_000, 40_000, -10_000]);
     expect(result.verdict).toBe('short');
     expect(result.worst.plan.cycle.key).toBe('2026-12');
@@ -68,7 +69,7 @@ describe('affordability', () => {
 
   it('judges the purchase by the cycles it changes', () => {
     const short = [{ ...plans[0], left: -2_000 }, ...plans.slice(1)];
-    const result = checkAffordability(short, purchasePayments(10_000, { kind: 'card', card: olive, payments: 1, rate: 15 }, today), 170_000, 20_000);
+    const result = checkAffordability(short, purchasePayments(10_000, { kind: 'card', card: olive, payments: 1, feePer100: 0 }, today), 170_000, 20_000);
     expect(result.verdict).toBe('affordable'); // December keeps 30,000 after the bill
     expect(result.alreadyShort?.plan.cycle.key).toBe('2026-10'); // Short without it, said separately
   });

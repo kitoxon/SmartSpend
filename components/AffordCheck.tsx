@@ -7,7 +7,7 @@ import { formatSignedYen, formatYen, parseAmount } from '../utils/format';
 import { CycleOutlook, DEFAULT_CUSHION, PayWith, Verdict, checkAffordability, cycleKeysToCheck, purchasePayments } from '../utils/afford';
 import { AmountInput } from './ui/AmountInput';
 import { Segmented } from './ui/Segmented';
-import { DEFAULT_SPLIT_RATE } from './CardBillFields';
+import { hasSplitFeeTable, splitFeePer100 } from '../utils/cardSplit';
 
 interface AffordCheckProps {
   cards: Card[];
@@ -32,7 +32,8 @@ export const AffordCheck: React.FC<AffordCheckProps> = ({ cards, planInput, sett
   const [price, setPrice] = useState('');
   const [payWithId, setPayWithId] = useState<string>(CASH);
   const [payments, setPayments] = useState<(typeof PAYMENT_OPTIONS)[number]>('1');
-  const [rate, setRate] = useState(DEFAULT_SPLIT_RATE);
+  // The fee typed over the card's own, until the card or the number of payments changes.
+  const [typedFee, setTypedFee] = useState<string | null>(null);
   const savedCushion = settings.cushion ?? DEFAULT_CUSHION;
   const [cushion, setCushion] = useState(String(savedCushion));
   const [editingCushion, setEditingCushion] = useState(false);
@@ -40,17 +41,18 @@ export const AffordCheck: React.FC<AffordCheckProps> = ({ cards, planInput, sett
   const amount = parseAmount(price) ?? 0;
   const card = cards.find((item) => item.id === payWithId);
   const cushionAmount = parseAmount(cushion) ?? 0;
-  const splitRate = Number(rate);
+  const fee = typedFee ?? (card ? String(splitFeePer100(card.name, Number(payments))) : '0');
+  const feePer100 = Number(fee);
 
   const result = useMemo(() => {
     if (amount <= 0) return null;
     const payWith: PayWith = card
-      ? { kind: 'card', card, payments: Number(payments), rate: Number.isFinite(splitRate) && splitRate >= 0 ? splitRate : 0 }
+      ? { kind: 'card', card, payments: Number(payments), feePer100: Number.isFinite(feePer100) && feePer100 >= 0 ? feePer100 : 0 }
       : { kind: 'cash' };
     const due = purchasePayments(amount, payWith, planInput.today);
     const plans = cycleKeysToCheck(currentKey, due, settings).map((key) => buildCyclePlan(getCycle(key, settings), planInput));
     return checkAffordability(plans, due, salaryEstimate, cushionAmount);
-  }, [amount, card, payments, splitRate, planInput, currentKey, settings, salaryEstimate, cushionAmount]);
+  }, [amount, card, payments, feePer100, planInput, currentKey, settings, salaryEstimate, cushionAmount]);
 
   const saveCushion = () => {
     setEditingCushion(false);
@@ -95,7 +97,7 @@ export const AffordCheck: React.FC<AffordCheckProps> = ({ cards, planInput, sett
         <p className="field-label">Pay with</p>
         <div className="flex flex-wrap gap-1.5">
           {[{ id: CASH, name: 'Cash or debit' }, ...cards].map((option) => (
-            <button key={option.id} type="button" onClick={() => setPayWithId(option.id)} aria-pressed={payWithId === option.id} className={payWithId === option.id ? 'chip-on' : 'chip'}>
+            <button key={option.id} type="button" onClick={() => { setPayWithId(option.id); setTypedFee(null); }} aria-pressed={payWithId === option.id} className={payWithId === option.id ? 'chip-on' : 'chip'}>
               {option.name}
             </button>
           ))}
@@ -109,13 +111,13 @@ export const AffordCheck: React.FC<AffordCheckProps> = ({ cards, planInput, sett
             label="Number of payments"
             value={payments}
             options={PAYMENT_OPTIONS.map((value) => ({ value, label: value === '1' ? 'In full' : value }))}
-            onChange={setPayments}
+            onChange={(next) => { setPayments(next); setTypedFee(null); }}
           />
           {payments !== '1' && (
             <label className="flex items-center gap-2 text-[13px] text-ink-2">
-              Interest about
-              <input value={rate} onChange={(event) => setRate(event.target.value)} inputMode="decimal" aria-label="Interest rate" className="field h-9 w-16 px-2 text-center text-sm" />
-              % a year
+              Fee
+              <input value={fee} onChange={(event) => setTypedFee(event.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" aria-label="Fee per ¥100" className="field h-9 w-16 px-2 text-center text-sm" />
+              per ¥100{hasSplitFeeTable(card.name) ? `, ${card.name}'s for ${payments} payments` : ', a typical fee'}
             </label>
           )}
         </div>
@@ -162,7 +164,7 @@ export const AffordCheck: React.FC<AffordCheckProps> = ({ cards, planInput, sett
 
           {allPayments.length > 1 && (
             <p className="text-xs leading-relaxed text-ink-3">
-              {allPayments.length} payments, about {formatYen(result.interest)} in interest. Arrange the split with the card company (あとから分割), then set it on the bill in Runway.
+              {allPayments.length} payments, {formatYen(result.interest)} in fees. Arrange the split with the card company (あとから分割), then set it on the bill in Runway.
             </p>
           )}
         </div>

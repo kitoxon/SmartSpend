@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { Bill, Debt, PlannerData } from '../types';
-import { Obligation, averageCardUsage, lastCardBill, monthlyInterest, scheduledPrincipal } from '../utils/payCycle';
+import { Obligation, averageCardUsage, cardBreakdownId, lastCardBill, monthlyInterest, scheduledPrincipal } from '../utils/payCycle';
 import { formatWeekdayDate } from '../utils/jpCalendar';
 import { formatYen, parseAmount } from '../utils/format';
 import { CardBillInput, installmentDueOnBill } from '../services/planner';
@@ -34,7 +34,7 @@ export const ObligationEditor: React.FC<ObligationEditorProps> = ({ obligation, 
   const [paid, setPaid] = useState(obligation.paid);
   const [cardValue, setCardValue] = useState<CardBillValue>(() => card
     ? cardBillValueFor(card, obligation.usageMonth!, obligation.statement, debts, data.statements)
-    : emptyCardBillValue(null, 0));
+    : emptyCardBillValue(undefined, null, 0));
   const [billAmount, setBillAmount] = useState(obligation.amount > 0 ? String(obligation.amount) : '');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -118,6 +118,7 @@ export const ObligationEditor: React.FC<ObligationEditorProps> = ({ obligation, 
           lastBill={lastBill}
           usual={usual}
           showInstallment={installment > 0 || obligation.installment > 0}
+          purchases={data.cardBreakdowns.find((breakdown) => breakdown.id === cardBreakdownId(card.id, obligation.usageMonth!))?.splittable}
         />
       )}
       {bill && (

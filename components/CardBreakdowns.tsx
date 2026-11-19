@@ -42,6 +42,7 @@ interface ImportMonth {
   revolving: boolean;
   notInBill: VpassMonth['notInBill'];
   unconfirmed: VpassMonth['unconfirmed'];
+  splittable: VpassMonth['splittable'];
   categories: MerchantGroup[];
   places: MerchantGroup[];
 }
@@ -106,7 +107,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
   const card = cards.find((item) => item.id === cardId);
 
   const months: ImportMonth[] = !preview ? [] : preview.kind === 'paypay'
-    ? (method ? summarizePaypayHistory(preview.payments, method) : []).map((month) => ({ ...month, billed: null, revolving: false, notInBill: [], unconfirmed: [] }))
+    ? (method ? summarizePaypayHistory(preview.payments, method) : []).map((month) => ({ ...month, billed: null, revolving: false, notInBill: [], unconfirmed: [], splittable: [] }))
     : preview.months.map((month) => ({
       usageMonth: month.usageMonth,
       firstDate: month.firstDate,
@@ -118,6 +119,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
       revolving: month.revolving,
       notInBill: month.notInBill,
       unconfirmed: month.unconfirmed,
+      splittable: month.splittable,
       categories: month.categories,
       places: month.places,
     }));
@@ -183,6 +185,7 @@ export const CardBreakdowns: React.FC<CardBreakdownsProps> = ({ data, cards, ser
       ...(month.revolving ? { revolving: true } : {}),
       ...(month.notInBill.length ? { notInBill: month.notInBill.map(({ merchant, amount, revolving }) => ({ label: merchant, amount, revolving })) } : {}),
       ...(month.unconfirmed.length ? { unconfirmed: month.unconfirmed.map(({ merchant, amount }) => ({ label: merchant, amount })) } : {}),
+      ...(month.splittable.length ? { splittable: month.splittable } : {}),
       // Removing the import later also removes a month total it set.
       ...(usages.some((usage) => usage.usageMonth === month.usageMonth) ? { setMonthTotal: true } : {}),
       categories: month.categories,

@@ -104,10 +104,29 @@ export interface CardStatement {
   splitAmount: number; // Part of `amount` moved into a new installment debt
   splitDebtId?: string;
   splitFirstPayment?: number; // The split's first installment, when this same bill pays it
+  // How the split was arranged with the card company. A split saved before
+  // fees came from the card's table has none, and keeps its yearly interest.
+  splitPlan?: CardSplitPlan;
   paidAt?: string;
   // Principal taken off linked debts when this bill was marked paid, so that
   // un-marking it can restore their balances exactly.
   appliedPayments?: { debtId: string; principal: number; previousDueDate: string }[];
+}
+
+/** A purchase on a statement that the card company lets you move into installments. */
+export interface SplitLine {
+  id: string;
+  date: string;
+  label: string;
+  amount: number;
+}
+
+export interface CardSplitPlan {
+  payments: number;
+  feePer100: number; // Yen of fee per ¥100, for all the payments together
+  fee: number;
+  startsThisBill: boolean;
+  lines?: SplitLine[]; // The purchases chosen, when they came from an imported statement
 }
 
 export interface Bill {
@@ -178,6 +197,8 @@ export interface CardBreakdown {
   // 1回払い lines due with this payment but not shown as paid yet; the bill counts them.
   unconfirmed?: { label: string; amount: number }[];
   setMonthTotal?: boolean; // The import also set the card's month total
+  // From a card statement: purchases in this bill that あとから分割 can turn into installments.
+  splittable?: SplitLine[];
   categories: { label: string; amount: number; count: number }[];
   places: { label: string; amount: number; count: number }[];
 }

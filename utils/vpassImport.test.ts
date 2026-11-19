@@ -46,6 +46,24 @@ describe('Vpass statement', () => {
     expect(final).toMatchObject({ billed: 800, unconfirmed: [], notInBill: [{ merchant: 'OVERSEAS SHOP', amount: 9_000, revolving: false }] });
   });
 
+  it('lists the purchases that can still be split', () => {
+    const statement = [
+      'テスト タロウ様,1234-****-****-5678,Ａｍａｚｏｎ　Ｍａｓｔｅｒｃａｒｄ',
+      "2026/10/3,ＡＭＡＺＯＮ．ＣＯ．ＪＰ,ご本人,１回払い,,'26/11,21950,21950,,,,,",
+      "2026/10/9,ニトリ,ご本人,２回払い,,'26/11,10000,5000,,,,,",
+      "2026/10/12,ドト－ル,ご本人,１回払い,,'26/11,480,480,,,,,", // Under ¥1,000
+      "2026/10/15,ヤマダデンキ,ご本人,分割１２回,,'26/11,60000,5000,,,,,", // Already in installments
+      "2026/10/20,業務ス－パ－,ご本人,リボ払い,,'26/11,3000,3000,,,,,",
+      "2026/10/25,ＯＶＥＲＳＥＡＳ  ＳＨＯＰ,ご本人,１回払い,,'26/11,9000,,,50.00,EUR,180,10/26", // Not in this payment
+      "2026/10/28,年会費,ご本人,１回払い,,'26/11,1375,1375,,,,,",
+      ",ご請求合計,,,,'26/11,36805,36805,,,,,",
+    ].join('\r\n');
+    expect(parseVpassStatement(statement)[0].splittable).toEqual([
+      { id: '0', date: '2026-10-03', label: 'AMAZON.CO.JP', amount: 21_950 },
+      { id: '1', date: '2026-10-09', label: 'ニトリ', amount: 10_000 },
+    ]);
+  });
+
   it('adds up the paid column when there is no total row', () => {
     const [month] = parseVpassStatement(SAMPLE.split('\r\n').slice(0, -1).join('\n'));
     expect(month.billed).toBe(5_300);
@@ -119,7 +137,7 @@ describe('which card a statement belongs to', () => {
   const cards = [amazon, olive, paypay];
   const month = (places: [string, number][]): VpassMonth => ({
     billingMonth: '2026-11', usageMonth: '2026-10', firstDate: '2026-10-01', lastDate: '2026-10-30', count: places.length, foreignCount: 0,
-    revolving: false, billed: null, notInBill: [], unconfirmed: [], purchases: places.reduce((sum, [, amount]) => sum + amount, 0),
+    revolving: false, billed: null, notInBill: [], unconfirmed: [], splittable: [], purchases: places.reduce((sum, [, amount]) => sum + amount, 0),
     categories: [], places: places.map(([label, amount]) => ({ label, amount, count: 1 })),
   });
 

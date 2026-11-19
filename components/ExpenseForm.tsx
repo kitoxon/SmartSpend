@@ -129,7 +129,7 @@ export const ExpenseForm: React.FC<TransactionFormProps> = ({ onSave, onCancel, 
             </button>
           )}
         </div>
-        {type === 'income' && !transaction && <p className="mt-2 text-xs text-ink-3">Salary is entered at the payday check-in, not here.</p>}
+        {type === 'income' && !transaction && <p className="mt-2 text-xs text-ink-3">Salary, and overtime paid with it, goes in at the payday check-in, not here.</p>}
       </div>
 
       <div>

@@ -1,9 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { Bill, Card, Category, Debt, Goal, PlannerData } from '../types';
-import { CyclePlan, averageCardUsage, lastCardBill } from '../utils/payCycle';
+import { CyclePlan, averageCardUsage, cardBreakdownId, lastCardBill } from '../utils/payCycle';
 import { formatShortDate, formatWeekdayDate, fromDate, todayLocalDate } from '../utils/jpCalendar';
 import { formatSignedYen, formatYen, parseAmount } from '../utils/format';
-import { CardBillInput, firstSplitInstallment, installmentDueOnBill } from '../services/planner';
+import { CardBillInput, installmentDueOnBill, splitOnBill } from '../services/planner';
 import { AmountInput } from './ui/AmountInput';
 import { CardBillFields, CardBillValue, cardBillError, cardBillValueFor, readSplit } from './CardBillFields';
 import { APP_NAME } from '../constants';
@@ -76,8 +76,8 @@ export const PaydayCheckin: React.FC<PaydayCheckinProps> = ({ mode, plan, data, 
     const value = cardValues[item.key];
     const amount = parseAmount(value.amount);
     if (amount === null) return sum + item.amount;
-    const split = readSplit(value);
-    return sum + amount - (split?.amount ?? 0) + firstSplitInstallment(split);
+    const split = splitOnBill(readSplit(value), item.statement);
+    return sum + amount - split.moved + split.first;
   }, 0);
   const billTotal = billItems.reduce((sum, item) => sum + (parseAmount(billValues[item.key] ?? '') ?? 0), 0);
   const debtTotal = debtItems.reduce((sum, item) => sum + item.amount, 0);
@@ -139,6 +139,7 @@ export const PaydayCheckin: React.FC<PaydayCheckinProps> = ({ mode, plan, data, 
             <div>
               <label htmlFor="checkin-salary" className="field-label">Salary · {formatWeekdayDate(plan.cycle.payday)}</label>
               <AmountInput id="checkin-salary" value={salary} onChange={setSalary} size="lg" placeholder="0" autoFocus />
+              <p className="mt-1 text-xs text-ink-3">The amount that reached your account, with overtime and allowances.</p>
             </div>
             <div>
               <label htmlFor="checkin-carryover" className="field-label">Money left before the salary arrived</label>
@@ -168,6 +169,7 @@ export const PaydayCheckin: React.FC<PaydayCheckinProps> = ({ mode, plan, data, 
                     lastBill={lastCardBill(card.id, data.statements, item.usageMonth!)}
                     usual={usual}
                     showInstallment={installment > 0 || (item.statement?.installment ?? 0) > 0}
+                    purchases={data.cardBreakdowns.find((breakdown) => breakdown.id === cardBreakdownId(card.id, item.usageMonth!))?.splittable}
                   />
                 </div>
               );

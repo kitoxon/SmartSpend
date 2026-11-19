@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Debt, DebtType, DebtCategory } from '../types';
 import { localDateInputToIso } from '../utils/date';
+import { todayLocalDate } from '../utils/jpCalendar';
 import { Trash2 } from 'lucide-react';
 
 interface DebtFormProps {
@@ -14,7 +15,7 @@ export const DebtForm: React.FC<DebtFormProps> = ({ onSave, onCancel, debt, onDe
   const [amount, setAmount] = useState(debt ? debt.amount.toString() : '');
   const [person, setPerson] = useState(debt?.person ?? '');
   const [description] = useState(debt?.description ?? '');
-  const [dueDate, setDueDate] = useState(debt ? debt.dueDate.split('T')[0] : new Date().toISOString().split('T')[0]);
+  const [dueDate, setDueDate] = useState(debt ? debt.dueDate.split('T')[0] : todayLocalDate());
   const type: DebtType = 'payable';
   const [category, setCategory] = useState<DebtCategory>(debt?.debtCategory ?? 'Credit Card');
   const [interestRate, setInterestRate] = useState(debt?.interestRate?.toString() ?? '');
